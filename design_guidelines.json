@@ -1,0 +1,103 @@
+{
+  "project_name": "Unicaribe Cybersecurity Academic Tracker",
+  "theme": "dark",
+  "archetype": "Archetype 4: Swiss & High-Contrast (Cybersecurity/Technical Variant)",
+  "design_philosophy": "A precision-focused, data-dense command center for cybersecurity students. Emphasizes authority, clarity, and truth through a stark technical aesthetic with exposed grid structures, monospaced data points, and minimal decoration. Color is strictly functional, mapping directly to academic progress states.",
+  "color_palette": {
+    "background": {
+      "default": "#05070A",
+      "surface": "#0D1117",
+      "surface_elevated": "#161B22",
+      "overlay": "rgba(5, 7, 10, 0.8)"
+    },
+    "text": {
+      "primary": "#F9FAFB",
+      "secondary": "#9CA3AF",
+      "muted": "#6B7280",
+      "inverse": "#05070A"
+    },
+    "border": {
+      "default": "#1F2937",
+      "focus": "#3B82F6",
+      "subtle": "rgba(31, 41, 55, 0.4)"
+    },
+    "primary": "#3B82F6",
+    "status": {
+      "completada": "#10B981",
+      "cursando": "#F59E0B",
+      "planificada": "#3B82F6",
+      "pendiente": "#4B5563",
+      "danger": "#EF4444"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Outfit, sans-serif",
+      "body": "IBM Plex Sans, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scales": {
+      "h1": "text-4xl sm:text-5xl font-bold tracking-tighter",
+      "h2": "text-2xl sm:text-3xl font-semibold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-medium",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm text-secondary",
+      "label": "text-xs font-mono uppercase tracking-[0.2em] text-muted",
+      "metric": "text-4xl sm:text-5xl font-mono font-light tracking-tight"
+    }
+  },
+  "layout_spacing": {
+    "system": "8px base rhythm",
+    "dashboard_grid": "The 'Control Room' Grid: Base grid-cols-1 md:grid-cols-3 lg:grid-cols-4 with gap-6.",
+    "container_padding": "Generous spacing: p-6 or p-8 for standard cards; p-12 for hero or summary sections.",
+    "radius": "rounded-sm (4px) to rounded-md (6px) - sharp, technical feel."
+  },
+  "components": {
+    "cards": {
+      "style": "Flat background (surface), 1px subtle border, no shadow. Hover adds slight border color change and -translate-y-1 lift.",
+      "usage": "Dashboard widgets, Pensum trimester groups."
+    },
+    "buttons": {
+      "primary": "bg-primary text-white font-medium rounded-sm hover:bg-blue-400 transition-colors",
+      "secondary": "bg-surface_elevated text-primary border border-border hover:bg-gray-800 transition-colors"
+    },
+    "react_flow_nodes": {
+      "style": "Rectangular, sharp edges (rounded-sm), background: surface_elevated. Left border (4px) colored by subject status. Font mono for subject codes.",
+      "interaction": "Hover to see prerequisites highlighted. Click for details panel."
+    },
+    "data_tables": {
+      "style": "Minimal borders, left-aligned text, mono font for credits and grades. High contrast header row."
+    }
+  },
+  "visual_enhancers": {
+    "surfaces": "Grid Borders pattern. Expose the skeleton. Subtle borders on right and bottom of grid items.",
+    "glassmorphism": "Used only for sticky header or floating modals: bg-[#05070A]/80 backdrop-blur-xl border-b border-white/10.",
+    "tracing_beam": "Apply to the 'Graduation Estimator' or 'GPA Honors' card to highlight the ultimate goal.",
+    "icons": "Use Phosphor Icons (dense, technical appearance)."
+  },
+  "media": {
+    "images": [
+      {
+        "category": "login_background",
+        "url": "https://images.pexels.com/photos/36346048/pexels-photo-36346048.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Industrial metal mesh with geometric patterns. Used as a highly dark, textured background behind the login form with an 80% black overlay to maintain tech aesthetic."
+      },
+      {
+        "category": "student_avatar_placeholder",
+        "url": "https://images.unsplash.com/photo-1580077910645-a6fd54032e15?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHwxfHxjeWJlcnNlY3VyaXR5JTIwYWJzdHJhY3QlMjBkYXJrfGVufDB8fHx8MTc3NDU1NDQ5NXww&ixlib=rb-4.1.0&q=85",
+        "description": "Profile picture placeholder for the student profile."
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Ensure all interactive and key informational elements MUST include data-testid attributes (e.g., data-testid='login-submit-button').",
+    "Use standard JavaScript (.js/.jsx) for all React components. Do NOT use TypeScript (.tsx).",
+    "Use JetBrains Mono for all numeric data (GPA, Credits, Hours).",
+    "Implement 'Grid Borders' layout for the main dashboard: apply subtle borders to cards to make the grid visible.",
+    "Use Recharts for the analytical dashboard. The charts must use the exact status colors defined in the palette (Completada=Green, Cursando=Yellow, Planificada=Blue, Pendiente=Grey).",
+    "For the React Flow pensum tree, custom nodes should be minimalist, matching the technical theme, with a color indicator for the state.",
+    "DO NOT use Inter or generic fonts for headings; stick to Outfit.",
+    "Install and use @phosphor-icons/react for icons.",
+    "For the login page, use a split layout: left side is the dark mesh image with a deep overlay, right side is a clean, centered login form."
+  ]
+}
