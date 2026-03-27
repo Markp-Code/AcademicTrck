@@ -22,12 +22,12 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # JWT Config
-JWT_SECRET = os.environ.get('JWT_SECRET', 'unicaribe-academic-tracker-secret-key-2024')
+JWT_SECRET = os.environ.get('JWT_SECRET', 'uniprogress-academic-tracker-secret-key-2024')
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 
 # Create the main app
-app = FastAPI(title="Unicaribe Academic Tracker API")
+app = FastAPI(title="UniProgress Academic Tracker API")
 
 # Create router with /api prefix
 api_router = APIRouter(prefix="/api")
@@ -43,6 +43,8 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
+    university_id: Optional[str] = None
+    career_id: Optional[str] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -51,26 +53,51 @@ class UserLogin(BaseModel):
 class User(UserBase):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    university_id: Optional[str] = None
     career_id: Optional[str] = None
+    is_admin: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class UserResponse(UserBase):
     id: str
+    university_id: Optional[str] = None
     career_id: Optional[str] = None
+    is_admin: bool = False
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
 
+class University(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    country: str = "República Dominicana"
+    logo_url: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class UniversityCreate(BaseModel):
+    name: str
+    country: str = "República Dominicana"
+    logo_url: Optional[str] = None
+
 class Career(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
-    university: str
+    university_id: str
     total_credits: int
     duration_quarters: int
-    format: str
+    format: str = "Cuatrimestral"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class CareerCreate(BaseModel):
+    name: str
+    university_id: str
+    total_credits: int
+    duration_quarters: int
+    format: str = "Cuatrimestral"
 
 class Subject(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -80,12 +107,21 @@ class Subject(BaseModel):
     credits: int
     quarter: int
     career_id: str
-    prerequisites: List[str] = []  # List of subject codes
-    category: str = "General"  # For grouping: Matemáticas, Programación, Seguridad, etc.
+    prerequisites: List[str] = []
+    category: str = "General"
+
+class SubjectCreate(BaseModel):
+    code: str
+    name: str
+    credits: int
+    quarter: int
+    career_id: str
+    prerequisites: List[str] = []
+    category: str = "General"
 
 class StudentProgressCreate(BaseModel):
     subject_id: str
-    status: str  # completed, in_progress, planned, pending
+    status: str
     grade: Optional[float] = None
     override_prerequisite: bool = False
     override_reason: Optional[str] = None
@@ -95,7 +131,7 @@ class StudentProgress(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str
     subject_id: str
-    status: str  # completed, in_progress, planned, pending
+    status: str
     grade: Optional[float] = None
     completed_date: Optional[datetime] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -121,7 +157,7 @@ class DashboardStats(BaseModel):
     subjects_pending: int
     progress_percentage: float
     honor: Optional[str] = None
-    estimated_months_remaining: int
+    estimated_years_remaining: float
     gpa_by_quarter: List[dict]
     grade_distribution: List[dict]
     gpa_by_category: List[dict]
@@ -135,9 +171,10 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-def create_token(user_id: str) -> str:
+def create_token(user_id: str, is_admin: bool = False) -> str:
     payload = {
         "sub": user_id,
+        "is_admin": is_admin,
         "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS),
         "iat": datetime.now(timezone.utc)
     }
@@ -158,6 +195,11 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+async def get_admin_user(current_user: dict = Depends(get_current_user)) -> dict:
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
 
 def calculate_gpa_points(grade: float) -> float:
     if grade >= 90:
@@ -183,20 +225,17 @@ def get_honor(gpa: float) -> Optional[str]:
 
 @api_router.post("/auth/register", response_model=TokenResponse)
 async def register(user_data: UserCreate):
-    # Check if user exists
     existing = await db.users.find_one({"email": user_data.email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    # Get default career (Cybersecurity)
-    career = await db.careers.find_one({}, {"_id": 0})
-    
-    # Create user
     user = User(
         email=user_data.email,
         name=user_data.name,
         student_id=user_data.student_id,
-        career_id=career["id"] if career else None
+        university_id=user_data.university_id,
+        career_id=user_data.career_id,
+        is_admin=False
     )
     
     user_dict = user.model_dump()
@@ -205,9 +244,9 @@ async def register(user_data: UserCreate):
     
     await db.users.insert_one(user_dict)
     
-    # Initialize progress for all subjects
-    if career:
-        subjects = await db.subjects.find({"career_id": career["id"]}, {"_id": 0}).to_list(100)
+    # Initialize progress for career subjects if career selected
+    if user_data.career_id:
+        subjects = await db.subjects.find({"career_id": user_data.career_id}, {"_id": 0}).to_list(200)
         for subject in subjects:
             progress = StudentProgress(
                 user_id=user.id,
@@ -219,10 +258,14 @@ async def register(user_data: UserCreate):
             progress_dict["updated_at"] = progress_dict["updated_at"].isoformat()
             await db.student_progress.insert_one(progress_dict)
     
-    token = create_token(user.id)
+    token = create_token(user.id, user.is_admin)
     return TokenResponse(
         access_token=token,
-        user=UserResponse(id=user.id, email=user.email, name=user.name, student_id=user.student_id, career_id=user.career_id)
+        user=UserResponse(
+            id=user.id, email=user.email, name=user.name, 
+            student_id=user.student_id, university_id=user.university_id,
+            career_id=user.career_id, is_admin=user.is_admin
+        )
     )
 
 @api_router.post("/auth/login", response_model=TokenResponse)
@@ -231,7 +274,7 @@ async def login(credentials: UserLogin):
     if not user or not verify_password(credentials.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    token = create_token(user["id"])
+    token = create_token(user["id"], user.get("is_admin", False))
     return TokenResponse(
         access_token=token,
         user=UserResponse(
@@ -239,7 +282,9 @@ async def login(credentials: UserLogin):
             email=user["email"],
             name=user["name"],
             student_id=user.get("student_id"),
-            career_id=user.get("career_id")
+            university_id=user.get("university_id"),
+            career_id=user.get("career_id"),
+            is_admin=user.get("is_admin", False)
         )
     )
 
@@ -247,11 +292,84 @@ async def login(credentials: UserLogin):
 async def get_me(current_user: dict = Depends(get_current_user)):
     return UserResponse(**current_user)
 
+@api_router.put("/auth/update-career")
+async def update_user_career(
+    university_id: str,
+    career_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    # Update user's university and career
+    await db.users.update_one(
+        {"id": current_user["id"]},
+        {"$set": {"university_id": university_id, "career_id": career_id}}
+    )
+    
+    # Delete old progress
+    await db.student_progress.delete_many({"user_id": current_user["id"]})
+    
+    # Initialize progress for new career subjects
+    subjects = await db.subjects.find({"career_id": career_id}, {"_id": 0}).to_list(200)
+    for subject in subjects:
+        progress = StudentProgress(
+            user_id=current_user["id"],
+            subject_id=subject["id"],
+            status="pending"
+        )
+        progress_dict = progress.model_dump()
+        progress_dict["created_at"] = progress_dict["created_at"].isoformat()
+        progress_dict["updated_at"] = progress_dict["updated_at"].isoformat()
+        await db.student_progress.insert_one(progress_dict)
+    
+    return {"success": True, "message": "Career updated successfully"}
+
+# ============== UNIVERSITY ROUTES ==============
+
+@api_router.get("/universities")
+async def get_universities():
+    universities = await db.universities.find({}, {"_id": 0}).to_list(100)
+    return universities
+
+@api_router.get("/universities/{university_id}")
+async def get_university(university_id: str):
+    university = await db.universities.find_one({"id": university_id}, {"_id": 0})
+    if not university:
+        raise HTTPException(status_code=404, detail="University not found")
+    return university
+
+@api_router.post("/admin/universities", response_model=dict)
+async def create_university(data: UniversityCreate, admin: dict = Depends(get_admin_user)):
+    university = University(**data.model_dump())
+    uni_dict = university.model_dump()
+    uni_dict["created_at"] = uni_dict["created_at"].isoformat()
+    await db.universities.insert_one(uni_dict)
+    return {"success": True, "university": uni_dict}
+
+@api_router.put("/admin/universities/{university_id}")
+async def update_university(university_id: str, data: UniversityCreate, admin: dict = Depends(get_admin_user)):
+    result = await db.universities.update_one(
+        {"id": university_id},
+        {"$set": data.model_dump()}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="University not found")
+    return {"success": True}
+
+@api_router.delete("/admin/universities/{university_id}")
+async def delete_university(university_id: str, admin: dict = Depends(get_admin_user)):
+    # Delete related careers and subjects
+    careers = await db.careers.find({"university_id": university_id}, {"_id": 0}).to_list(100)
+    for career in careers:
+        await db.subjects.delete_many({"career_id": career["id"]})
+    await db.careers.delete_many({"university_id": university_id})
+    await db.universities.delete_one({"id": university_id})
+    return {"success": True}
+
 # ============== CAREER ROUTES ==============
 
 @api_router.get("/careers")
-async def get_careers():
-    careers = await db.careers.find({}, {"_id": 0}).to_list(100)
+async def get_careers(university_id: Optional[str] = None):
+    query = {"university_id": university_id} if university_id else {}
+    careers = await db.careers.find(query, {"_id": 0}).to_list(100)
     return careers
 
 @api_router.get("/careers/{career_id}")
@@ -261,12 +379,36 @@ async def get_career(career_id: str):
         raise HTTPException(status_code=404, detail="Career not found")
     return career
 
+@api_router.post("/admin/careers", response_model=dict)
+async def create_career(data: CareerCreate, admin: dict = Depends(get_admin_user)):
+    career = Career(**data.model_dump())
+    career_dict = career.model_dump()
+    career_dict["created_at"] = career_dict["created_at"].isoformat()
+    await db.careers.insert_one(career_dict)
+    return {"success": True, "career": career_dict}
+
+@api_router.put("/admin/careers/{career_id}")
+async def update_career(career_id: str, data: CareerCreate, admin: dict = Depends(get_admin_user)):
+    result = await db.careers.update_one(
+        {"id": career_id},
+        {"$set": data.model_dump()}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Career not found")
+    return {"success": True}
+
+@api_router.delete("/admin/careers/{career_id}")
+async def delete_career(career_id: str, admin: dict = Depends(get_admin_user)):
+    await db.subjects.delete_many({"career_id": career_id})
+    await db.careers.delete_one({"id": career_id})
+    return {"success": True}
+
 # ============== SUBJECT ROUTES ==============
 
 @api_router.get("/subjects")
 async def get_subjects(career_id: Optional[str] = None):
     query = {"career_id": career_id} if career_id else {}
-    subjects = await db.subjects.find(query, {"_id": 0}).to_list(100)
+    subjects = await db.subjects.find(query, {"_id": 0}).to_list(200)
     return subjects
 
 @api_router.get("/subjects/{subject_id}")
@@ -276,6 +418,47 @@ async def get_subject(subject_id: str):
         raise HTTPException(status_code=404, detail="Subject not found")
     return subject
 
+@api_router.post("/admin/subjects", response_model=dict)
+async def create_subject(data: SubjectCreate, admin: dict = Depends(get_admin_user)):
+    # Check if code already exists in this career
+    existing = await db.subjects.find_one({"code": data.code, "career_id": data.career_id})
+    if existing:
+        raise HTTPException(status_code=400, detail="Subject code already exists in this career")
+    
+    subject = Subject(**data.model_dump())
+    await db.subjects.insert_one(subject.model_dump())
+    
+    # Add to all users with this career
+    users = await db.users.find({"career_id": data.career_id}, {"_id": 0}).to_list(1000)
+    for user in users:
+        progress = StudentProgress(
+            user_id=user["id"],
+            subject_id=subject.id,
+            status="pending"
+        )
+        progress_dict = progress.model_dump()
+        progress_dict["created_at"] = progress_dict["created_at"].isoformat()
+        progress_dict["updated_at"] = progress_dict["updated_at"].isoformat()
+        await db.student_progress.insert_one(progress_dict)
+    
+    return {"success": True, "subject": subject.model_dump()}
+
+@api_router.put("/admin/subjects/{subject_id}")
+async def update_subject(subject_id: str, data: SubjectCreate, admin: dict = Depends(get_admin_user)):
+    result = await db.subjects.update_one(
+        {"id": subject_id},
+        {"$set": data.model_dump()}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    return {"success": True}
+
+@api_router.delete("/admin/subjects/{subject_id}")
+async def delete_subject(subject_id: str, admin: dict = Depends(get_admin_user)):
+    await db.student_progress.delete_many({"subject_id": subject_id})
+    await db.subjects.delete_one({"id": subject_id})
+    return {"success": True}
+
 # ============== PROGRESS ROUTES ==============
 
 @api_router.get("/progress")
@@ -283,27 +466,28 @@ async def get_progress(current_user: dict = Depends(get_current_user)):
     progress_list = await db.student_progress.find(
         {"user_id": current_user["id"]}, 
         {"_id": 0}
-    ).to_list(100)
+    ).to_list(200)
     return progress_list
 
 @api_router.get("/progress/detailed")
 async def get_detailed_progress(current_user: dict = Depends(get_current_user)):
-    """Get progress with subject details"""
     progress_list = await db.student_progress.find(
         {"user_id": current_user["id"]}, 
         {"_id": 0}
-    ).to_list(100)
+    ).to_list(200)
     
-    subjects = await db.subjects.find({}, {"_id": 0}).to_list(100)
+    career_id = current_user.get("career_id")
+    if career_id:
+        subjects = await db.subjects.find({"career_id": career_id}, {"_id": 0}).to_list(200)
+    else:
+        subjects = await db.subjects.find({}, {"_id": 0}).to_list(200)
+    
     subjects_map = {s["id"]: s for s in subjects}
     
     detailed = []
     for p in progress_list:
         subject = subjects_map.get(p["subject_id"], {})
-        detailed.append({
-            **p,
-            "subject": subject
-        })
+        detailed.append({**p, "subject": subject})
     
     return detailed
 
@@ -313,27 +497,23 @@ async def update_progress(
     data: StudentProgressCreate,
     current_user: dict = Depends(get_current_user)
 ):
-    # Get subject
     subject = await db.subjects.find_one({"id": subject_id}, {"_id": 0})
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
     
-    # Check prerequisites if changing to completed or in_progress
     if data.status in ["completed", "in_progress"] and not data.override_prerequisite:
         prereqs = subject.get("prerequisites", [])
         if prereqs:
-            # Get completed subjects
             completed_progress = await db.student_progress.find(
                 {"user_id": current_user["id"], "status": "completed"},
                 {"_id": 0}
-            ).to_list(100)
+            ).to_list(200)
             completed_subject_ids = [p["subject_id"] for p in completed_progress]
             
-            # Get subject codes for completed subjects
             completed_subjects = await db.subjects.find(
                 {"id": {"$in": completed_subject_ids}},
                 {"_id": 0}
-            ).to_list(100)
+            ).to_list(200)
             completed_codes = [s["code"] for s in completed_subjects]
             
             missing = [p for p in prereqs if p not in completed_codes]
@@ -344,7 +524,6 @@ async def update_progress(
                     "message": f"Esta materia requiere los siguientes prerrequisitos: {', '.join(missing)}"
                 }
     
-    # Log override if applicable
     if data.override_prerequisite and data.status in ["completed", "in_progress"]:
         prereqs = subject.get("prerequisites", [])
         if prereqs:
@@ -358,7 +537,6 @@ async def update_progress(
             log_dict["created_at"] = log_dict["created_at"].isoformat()
             await db.override_logs.insert_one(log_dict)
     
-    # Update progress
     update_data = {
         "status": data.status,
         "grade": data.grade if data.status == "completed" else None,
@@ -374,7 +552,6 @@ async def update_progress(
     )
     
     if result.matched_count == 0:
-        # Create if doesn't exist
         progress = StudentProgress(
             user_id=current_user["id"],
             subject_id=subject_id,
@@ -395,21 +572,20 @@ async def update_progress(
 
 @api_router.get("/dashboard/stats", response_model=DashboardStats)
 async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
-    # Get all progress
     progress_list = await db.student_progress.find(
         {"user_id": current_user["id"]},
         {"_id": 0}
-    ).to_list(100)
+    ).to_list(200)
     
-    # Get all subjects
-    subjects = await db.subjects.find({}, {"_id": 0}).to_list(100)
+    career_id = current_user.get("career_id")
+    if career_id:
+        subjects = await db.subjects.find({"career_id": career_id}, {"_id": 0}).to_list(200)
+    else:
+        subjects = await db.subjects.find({}, {"_id": 0}).to_list(200)
+    
     subjects_map = {s["id"]: s for s in subjects}
     
-    # Calculate stats
-    completed = []
-    in_progress = []
-    planned = []
-    pending = []
+    completed, in_progress, planned, pending = [], [], [], []
     
     for p in progress_list:
         subject = subjects_map.get(p["subject_id"])
@@ -426,7 +602,6 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
         else:
             pending.append(item)
     
-    # Calculate GPA
     total_points = 0
     total_credits_earned = 0
     
@@ -439,16 +614,14 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
     
     gpa = total_points / total_credits_earned if total_credits_earned > 0 else 0.0
     
-    # Total credits
     total_credits = sum(s["credits"] for s in subjects)
     credits_remaining = total_credits - total_credits_earned
     
-    # Progress percentage
     progress_percentage = (total_credits_earned / total_credits * 100) if total_credits > 0 else 0
     
-    # Estimated months remaining
+    # Calculate estimated years (1 subject per month = 12 subjects per year)
     remaining_subjects = len(in_progress) + len(planned) + len(pending)
-    estimated_months = remaining_subjects  # 1 subject per month
+    estimated_years = remaining_subjects / 12.0  # 12 subjects per year
     
     # GPA by quarter
     gpa_by_quarter = []
@@ -501,7 +674,7 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
         cat_gpa = data["points"] / data["credits"] if data["credits"] > 0 else 0
         gpa_by_category.append({"category": cat, "gpa": round(cat_gpa, 2)})
     
-    # Available subjects (prerequisites completed)
+    # Available subjects
     completed_codes = [item["subject"]["code"] for item in completed]
     available = []
     
@@ -527,116 +700,115 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
         subjects_pending=len(pending),
         progress_percentage=round(progress_percentage, 1),
         honor=get_honor(gpa),
-        estimated_months_remaining=estimated_months,
+        estimated_years_remaining=round(estimated_years, 1),
         gpa_by_quarter=gpa_by_quarter,
         grade_distribution=grade_distribution,
         gpa_by_category=gpa_by_category,
-        available_subjects=available[:10]  # Limit to 10
+        available_subjects=available[:10]
     )
+
+# ============== ADMIN STATS ==============
+
+@api_router.get("/admin/stats")
+async def get_admin_stats(admin: dict = Depends(get_admin_user)):
+    universities_count = await db.universities.count_documents({})
+    careers_count = await db.careers.count_documents({})
+    subjects_count = await db.subjects.count_documents({})
+    users_count = await db.users.count_documents({})
+    
+    return {
+        "universities": universities_count,
+        "careers": careers_count,
+        "subjects": subjects_count,
+        "users": users_count
+    }
 
 # ============== SEED DATA ==============
 
 @api_router.post("/seed")
 async def seed_database():
-    """Seed database with Cybersecurity career and subjects"""
-    
-    # Check if already seeded
-    existing_career = await db.careers.find_one({"name": "Ingeniería en Ciberseguridad"})
-    if existing_career:
+    existing_uni = await db.universities.find_one({"name": "Unicaribe"})
+    if existing_uni:
         return {"message": "Database already seeded"}
+    
+    # Create Unicaribe university
+    university = University(
+        name="Unicaribe",
+        country="República Dominicana"
+    )
+    uni_dict = university.model_dump()
+    uni_dict["created_at"] = uni_dict["created_at"].isoformat()
+    await db.universities.insert_one(uni_dict)
     
     # Create career
     career = Career(
         name="Ingeniería en Ciberseguridad",
-        university="Unicaribe",
+        university_id=university.id,
         total_credits=185,
         duration_quarters=12,
         format="Cuatrimestral (1 materia por mes)"
     )
     career_dict = career.model_dump()
+    career_dict["created_at"] = career_dict["created_at"].isoformat()
     await db.careers.insert_one(career_dict)
     
-    # Subject data with categories
+    # Subject data
     subjects_data = [
-        # Primer Cuatrimestre
         {"code": "FGC-101", "name": "Orientación Académica Institucional", "credits": 2, "quarter": 1, "prerequisites": [], "category": "Formación General"},
         {"code": "FGC-102", "name": "Método del Trabajo Académico", "credits": 2, "quarter": 1, "prerequisites": [], "category": "Formación General"},
         {"code": "FGC-103", "name": "Metodología de la Investigación", "credits": 3, "quarter": 1, "prerequisites": [], "category": "Formación General"},
         {"code": "ADE-101", "name": "Administración I", "credits": 3, "quarter": 1, "prerequisites": [], "category": "Administración"},
-        
-        # Segundo Cuatrimestre
         {"code": "FGC-104", "name": "Lengua Española I", "credits": 3, "quarter": 2, "prerequisites": ["FGC-102"], "category": "Formación General"},
         {"code": "FGC-105", "name": "Matemática Básica I", "credits": 3, "quarter": 2, "prerequisites": ["FGC-102"], "category": "Matemáticas"},
         {"code": "FGC-106", "name": "Tecnología de la Información y Comunicación I", "credits": 3, "quarter": 2, "prerequisites": ["FGC-102"], "category": "Tecnología"},
         {"code": "ING-101", "name": "Introducción a la Ingeniería", "credits": 3, "quarter": 2, "prerequisites": [], "category": "Ingeniería"},
-        
-        # Tercer Cuatrimestre
         {"code": "FGC-107", "name": "Historia Social Dominicana", "credits": 3, "quarter": 3, "prerequisites": ["FGC-102"], "category": "Formación General"},
         {"code": "FGC-108", "name": "Inglés I", "credits": 3, "quarter": 3, "prerequisites": ["FGC-102"], "category": "Formación General"},
         {"code": "DMF-209", "name": "Física I", "credits": 4, "quarter": 3, "prerequisites": ["FGC-105"], "category": "Ciencias"},
         {"code": "QUI-400", "name": "Química I", "credits": 3, "quarter": 3, "prerequisites": ["FGC-105"], "category": "Ciencias"},
         {"code": "MTI-200", "name": "Matemática II", "credits": 4, "quarter": 3, "prerequisites": ["FGC-105"], "category": "Matemáticas"},
-        
-        # Cuarto Cuatrimestre
         {"code": "FGC-109", "name": "Filosofía", "credits": 2, "quarter": 4, "prerequisites": ["FGC-102"], "category": "Formación General"},
         {"code": "FGC-110", "name": "Desarrollo Sostenible y Gestión de Riesgos", "credits": 2, "quarter": 4, "prerequisites": ["FGC-102"], "category": "Formación General"},
         {"code": "MTI-300", "name": "Matemática III", "credits": 4, "quarter": 4, "prerequisites": ["MTI-200"], "category": "Matemáticas"},
         {"code": "DMF-210", "name": "Física II", "credits": 4, "quarter": 4, "prerequisites": ["DMF-209"], "category": "Ciencias"},
-        
-        # Quinto Cuatrimestre
         {"code": "MAT-241", "name": "Estadística I", "credits": 3, "quarter": 5, "prerequisites": ["FGC-105"], "category": "Matemáticas"},
         {"code": "ING-102", "name": "Ciencia e Ingeniería de Materiales", "credits": 4, "quarter": 5, "prerequisites": ["QUI-400"], "category": "Ingeniería"},
         {"code": "ING-103", "name": "Cálculo Integral", "credits": 4, "quarter": 5, "prerequisites": ["MTI-300"], "category": "Matemáticas"},
         {"code": "INF-215", "name": "Ingeniería Económica", "credits": 3, "quarter": 5, "prerequisites": ["MTI-200"], "category": "Ingeniería"},
-        
-        # Sexto Cuatrimestre
         {"code": "MAT-242", "name": "Estadística II", "credits": 3, "quarter": 6, "prerequisites": ["MAT-241"], "category": "Matemáticas"},
         {"code": "ING-105", "name": "Taller de Mecánica de Hardware", "credits": 3, "quarter": 6, "prerequisites": ["FGC-106"], "category": "Tecnología"},
         {"code": "ING-104", "name": "Cálculo Vectorial", "credits": 4, "quarter": 6, "prerequisites": ["ING-103"], "category": "Matemáticas"},
         {"code": "INF-222", "name": "Sistema Operativo I", "credits": 3, "quarter": 6, "prerequisites": ["FGC-106"], "category": "Programación"},
         {"code": "INF-221", "name": "Introducción a la Programación", "credits": 3, "quarter": 6, "prerequisites": ["FGC-106"], "category": "Programación"},
-        
-        # Séptimo Cuatrimestre
         {"code": "TIC-408", "name": "Seguridad de la Información", "credits": 3, "quarter": 7, "prerequisites": ["FGC-106"], "category": "Seguridad"},
         {"code": "ISW-301", "name": "Taller de Programación I", "credits": 5, "quarter": 7, "prerequisites": ["INF-221"], "category": "Programación"},
         {"code": "INF-437", "name": "Redes Informáticas", "credits": 3, "quarter": 7, "prerequisites": ["INF-222"], "category": "Redes"},
         {"code": "ISW-321", "name": "Taller de Bases de Datos I", "credits": 4, "quarter": 7, "prerequisites": ["INF-221"], "category": "Programación"},
-        
-        # Octavo Cuatrimestre
         {"code": "INR-215", "name": "Taller de Redes I", "credits": 4, "quarter": 8, "prerequisites": ["INF-437"], "category": "Redes"},
         {"code": "TIC-402", "name": "Ética en Tecnología", "credits": 2, "quarter": 8, "prerequisites": ["FGC-110"], "category": "Formación General"},
         {"code": "INC-404", "name": "Electiva I", "credits": 3, "quarter": 8, "prerequisites": [], "category": "Electiva"},
         {"code": "INC-222", "name": "Ciberdelitos, Ciberterrorismo, Ciberguerra", "credits": 3, "quarter": 8, "prerequisites": ["TIC-408"], "category": "Seguridad"},
-        
-        # Noveno Cuatrimestre
         {"code": "INC-231", "name": "Criptografía y Criptoanálisis", "credits": 3, "quarter": 9, "prerequisites": ["TIC-408"], "category": "Seguridad"},
         {"code": "INC-315", "name": "Taller Seguridad de Redes y Telecomunicaciones", "credits": 4, "quarter": 9, "prerequisites": ["INR-215"], "category": "Seguridad"},
         {"code": "INC-325", "name": "Taller Seguridad de Sistemas Operativos y Software", "credits": 4, "quarter": 9, "prerequisites": ["INF-222"], "category": "Seguridad"},
         {"code": "INC-331", "name": "Sistema de Gestión de la Seguridad de la Información", "credits": 3, "quarter": 9, "prerequisites": ["TIC-408"], "category": "Seguridad"},
         {"code": "INC-332", "name": "Taller Seguridad de Bases de Datos", "credits": 4, "quarter": 9, "prerequisites": ["ISW-321"], "category": "Seguridad"},
-        
-        # Décimo Cuatrimestre
         {"code": "INC-411", "name": "Gestión de Riesgos de la Seguridad de la Información", "credits": 3, "quarter": 10, "prerequisites": ["INC-331"], "category": "Seguridad"},
         {"code": "INC-333", "name": "Taller Seguridad de Infraestructura Física, Virtual y en la Nube", "credits": 4, "quarter": 10, "prerequisites": ["INC-315"], "category": "Seguridad"},
         {"code": "INC-405", "name": "Electiva II", "credits": 3, "quarter": 10, "prerequisites": [], "category": "Electiva"},
         {"code": "INC-401", "name": "Proyecto de Ciberseguridad - I", "credits": 5, "quarter": 10, "prerequisites": ["INC-331"], "category": "Proyecto"},
         {"code": "INC-403", "name": "Pasantía - Práctica de Ciberseguridad", "credits": 8, "quarter": 10, "prerequisites": ["INC-411"], "category": "Proyecto"},
-        
-        # Undécimo Cuatrimestre
         {"code": "INC-412", "name": "Marco Legal de la Seguridad de la Información", "credits": 3, "quarter": 11, "prerequisites": ["INC-331"], "category": "Seguridad"},
         {"code": "INC-413", "name": "Taller Seguridad en Dispositivos Móviles", "credits": 4, "quarter": 11, "prerequisites": ["INC-325"], "category": "Seguridad"},
         {"code": "INC-402", "name": "Proyecto de Ciberseguridad - II", "credits": 5, "quarter": 11, "prerequisites": ["INC-401"], "category": "Proyecto"},
         {"code": "INC-334", "name": "Ingeniería Social", "credits": 3, "quarter": 11, "prerequisites": ["INC-222"], "category": "Seguridad"},
         {"code": "FGC-111", "name": "Seminario de Grado", "credits": 3, "quarter": 11, "prerequisites": ["FGC-103"], "category": "Formación General"},
-        
-        # Duodécimo Cuatrimestre
         {"code": "INC-414", "name": "Taller de Seguridad IoT y Entornos Industriales", "credits": 4, "quarter": 12, "prerequisites": ["INC-333"], "category": "Seguridad"},
         {"code": "INC-421", "name": "Análisis Forense en Ciberseguridad", "credits": 4, "quarter": 12, "prerequisites": ["INC-412"], "category": "Seguridad"},
         {"code": "INC-422", "name": "Taller de Auditoría de Seguridad de la Información", "credits": 4, "quarter": 12, "prerequisites": ["INC-331"], "category": "Seguridad"},
         {"code": "INC-600", "name": "Proyecto Integrador de Ciberseguridad: Trabajo de Grado", "credits": 6, "quarter": 12, "prerequisites": [], "category": "Proyecto"},
     ]
     
-    # Insert subjects
     for subj_data in subjects_data:
         subject = Subject(
             code=subj_data["code"],
@@ -649,7 +821,24 @@ async def seed_database():
         )
         await db.subjects.insert_one(subject.model_dump())
     
-    return {"message": "Database seeded successfully", "career_id": career.id, "subjects_count": len(subjects_data)}
+    # Create admin user
+    admin_user = User(
+        email="admin@uniprogress.com",
+        name="Administrador",
+        is_admin=True
+    )
+    admin_dict = admin_user.model_dump()
+    admin_dict["password"] = hash_password("admin123")
+    admin_dict["created_at"] = admin_dict["created_at"].isoformat()
+    await db.users.insert_one(admin_dict)
+    
+    return {
+        "message": "Database seeded successfully",
+        "university_id": university.id,
+        "career_id": career.id,
+        "subjects_count": len(subjects_data),
+        "admin_credentials": {"email": "admin@uniprogress.com", "password": "admin123"}
+    }
 
 # Include router
 app.include_router(api_router)
@@ -672,8 +861,7 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def startup():
-    # Auto-seed on startup if empty
-    existing = await db.careers.find_one({})
+    existing = await db.universities.find_one({})
     if not existing:
         logger.info("Seeding database...")
         await seed_database()

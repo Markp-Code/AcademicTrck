@@ -2,14 +2,11 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
-import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
-import { Label } from '../components/ui/label';
 import { Badge } from '../components/ui/badge';
 import { Progress } from '../components/ui/progress';
 import { 
     User, Envelope, IdentificationCard, GraduationCap, 
-    Trophy, Target, Clock, Pencil, Check
+    Trophy, Target, Clock, Buildings
 } from '@phosphor-icons/react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
@@ -19,20 +16,25 @@ const Profile = () => {
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
     const [career, setCareer] = useState(null);
+    const [university, setUniversity] = useState(null);
 
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [user]);
 
     const fetchData = async () => {
         try {
-            const [statsRes, careersRes] = await Promise.all([
-                axios.get(`${API_URL}/api/dashboard/stats`),
-                axios.get(`${API_URL}/api/careers`)
-            ]);
+            const statsRes = await axios.get(`${API_URL}/api/dashboard/stats`);
             setStats(statsRes.data);
-            if (careersRes.data.length > 0) {
-                setCareer(careersRes.data[0]);
+            
+            if (user?.university_id) {
+                const uniRes = await axios.get(`${API_URL}/api/universities/${user.university_id}`);
+                setUniversity(uniRes.data);
+            }
+            
+            if (user?.career_id) {
+                const careerRes = await axios.get(`${API_URL}/api/careers/${user.career_id}`);
+                setCareer(careerRes.data);
             }
         } catch (error) {
             console.error('Failed to fetch data:', error);
@@ -96,21 +98,25 @@ const Profile = () => {
                                 </div>
                             )}
 
-                            <div className="flex items-center gap-3 p-3 rounded-md bg-secondary/50">
-                                <GraduationCap size={20} className="text-purple-400" />
-                                <div>
-                                    <p className="text-xs text-muted-foreground">Carrera</p>
-                                    <p className="text-sm font-medium">{career?.name || 'Ingeniería en Ciberseguridad'}</p>
+                            {university && (
+                                <div className="flex items-center gap-3 p-3 rounded-md bg-secondary/50">
+                                    <Buildings size={20} className="text-amber-400" />
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Universidad</p>
+                                        <p className="text-sm font-medium">{university.name}</p>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
 
-                            <div className="flex items-center gap-3 p-3 rounded-md bg-secondary/50">
-                                <Target size={20} className="text-amber-400" />
-                                <div>
-                                    <p className="text-xs text-muted-foreground">Universidad</p>
-                                    <p className="text-sm font-medium">{career?.university || 'Unicaribe'}</p>
+                            {career && (
+                                <div className="flex items-center gap-3 p-3 rounded-md bg-secondary/50">
+                                    <GraduationCap size={20} className="text-purple-400" />
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Carrera</p>
+                                        <p className="text-sm font-medium">{career.name}</p>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                         </div>
                     </CardContent>
                 </Card>
@@ -122,75 +128,83 @@ const Profile = () => {
                         <CardDescription>Tu progreso en la carrera</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                        {/* GPA and Honor */}
-                        <div className="flex items-center justify-between p-4 rounded-md bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border border-blue-500/20">
-                            <div>
-                                <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
-                                    Índice Académico (GPA)
-                                </p>
-                                <p className="font-mono text-5xl font-light text-foreground mt-1">
-                                    {stats?.gpa?.toFixed(2) || '0.00'}
-                                </p>
-                            </div>
-                            {stats?.honor && (
-                                <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-sm px-3 py-1">
-                                    <Trophy size={16} className="mr-2" />
-                                    {stats.honor}
-                                </Badge>
-                            )}
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div>
-                            <div className="flex justify-between items-center mb-2">
-                                <span className="text-sm text-muted-foreground">Progreso de la Carrera</span>
-                                <span className="font-mono text-sm">{stats?.progress_percentage?.toFixed(1) || 0}%</span>
-                            </div>
-                            <Progress value={stats?.progress_percentage || 0} className="h-3 bg-secondary" />
-                        </div>
-
-                        {/* Stats Grid */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="p-4 rounded-md bg-secondary/50 border border-border">
-                                <p className="text-xs text-muted-foreground mb-1">Créditos Obtenidos</p>
-                                <p className="font-mono text-2xl font-medium">{stats?.credits_earned || 0}</p>
-                                <p className="text-xs text-muted-foreground">de {stats?.total_credits || 185}</p>
-                            </div>
-                            <div className="p-4 rounded-md bg-secondary/50 border border-border">
-                                <p className="text-xs text-muted-foreground mb-1">Materias Completadas</p>
-                                <p className="font-mono text-2xl font-medium text-emerald-400">{stats?.subjects_completed || 0}</p>
-                                <p className="text-xs text-muted-foreground">de 53 materias</p>
-                            </div>
-                            <div className="p-4 rounded-md bg-secondary/50 border border-border">
-                                <p className="text-xs text-muted-foreground mb-1">Cursando Actualmente</p>
-                                <p className="font-mono text-2xl font-medium text-amber-400">{stats?.subjects_in_progress || 0}</p>
-                                <p className="text-xs text-muted-foreground">materias activas</p>
-                            </div>
-                            <div className="p-4 rounded-md bg-secondary/50 border border-border">
-                                <p className="text-xs text-muted-foreground mb-1">Tiempo Estimado</p>
-                                <p className="font-mono text-2xl font-medium text-cyan-400">{stats?.estimated_months_remaining || 0}</p>
-                                <p className="text-xs text-muted-foreground">meses restantes</p>
-                            </div>
-                        </div>
-
-                        {/* Career Info */}
-                        {career && (
-                            <div className="p-4 rounded-md bg-secondary/30 border border-border">
-                                <h3 className="font-heading font-medium mb-3">Información de la Carrera</h3>
-                                <div className="grid grid-cols-2 gap-4 text-sm">
+                        {stats ? (
+                            <>
+                                {/* GPA and Honor */}
+                                <div className="flex items-center justify-between p-4 rounded-md bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border border-blue-500/20">
                                     <div>
-                                        <p className="text-muted-foreground">Total de Créditos</p>
-                                        <p className="font-mono font-medium">{career.total_credits}</p>
+                                        <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+                                            Índice Académico (GPA)
+                                        </p>
+                                        <p className="font-mono text-5xl font-light text-foreground mt-1">
+                                            {stats.gpa?.toFixed(2) || '0.00'}
+                                        </p>
                                     </div>
-                                    <div>
-                                        <p className="text-muted-foreground">Duración</p>
-                                        <p className="font-mono font-medium">{career.duration_quarters} cuatrimestres</p>
+                                    {stats.honor && (
+                                        <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-sm px-3 py-1">
+                                            <Trophy size={16} className="mr-2" />
+                                            {stats.honor}
+                                        </Badge>
+                                    )}
+                                </div>
+
+                                {/* Progress Bar */}
+                                <div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <span className="text-sm text-muted-foreground">Progreso de la Carrera</span>
+                                        <span className="font-mono text-sm">{stats.progress_percentage?.toFixed(1) || 0}%</span>
                                     </div>
-                                    <div className="col-span-2">
-                                        <p className="text-muted-foreground">Formato</p>
-                                        <p className="font-medium">{career.format}</p>
+                                    <Progress value={stats.progress_percentage || 0} className="h-3 bg-secondary" />
+                                </div>
+
+                                {/* Stats Grid */}
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    <div className="p-4 rounded-md bg-secondary/50 border border-border">
+                                        <p className="text-xs text-muted-foreground mb-1">Créditos Obtenidos</p>
+                                        <p className="font-mono text-2xl font-medium">{stats.credits_earned || 0}</p>
+                                        <p className="text-xs text-muted-foreground">de {stats.total_credits || 0}</p>
+                                    </div>
+                                    <div className="p-4 rounded-md bg-secondary/50 border border-border">
+                                        <p className="text-xs text-muted-foreground mb-1">Materias Completadas</p>
+                                        <p className="font-mono text-2xl font-medium text-emerald-400">{stats.subjects_completed || 0}</p>
+                                        <p className="text-xs text-muted-foreground">materias</p>
+                                    </div>
+                                    <div className="p-4 rounded-md bg-secondary/50 border border-border">
+                                        <p className="text-xs text-muted-foreground mb-1">Cursando Actualmente</p>
+                                        <p className="font-mono text-2xl font-medium text-amber-400">{stats.subjects_in_progress || 0}</p>
+                                        <p className="text-xs text-muted-foreground">materias activas</p>
+                                    </div>
+                                    <div className="p-4 rounded-md bg-secondary/50 border border-border">
+                                        <p className="text-xs text-muted-foreground mb-1">Tiempo Estimado</p>
+                                        <p className="font-mono text-2xl font-medium text-cyan-400">{stats.estimated_years_remaining || 0}</p>
+                                        <p className="text-xs text-muted-foreground">años restantes</p>
                                     </div>
                                 </div>
+
+                                {/* Career Info */}
+                                {career && (
+                                    <div className="p-4 rounded-md bg-secondary/30 border border-border">
+                                        <h3 className="font-heading font-medium mb-3">Información de la Carrera</h3>
+                                        <div className="grid grid-cols-2 gap-4 text-sm">
+                                            <div>
+                                                <p className="text-muted-foreground">Total de Créditos</p>
+                                                <p className="font-mono font-medium">{career.total_credits}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-muted-foreground">Duración</p>
+                                                <p className="font-mono font-medium">{career.duration_quarters} cuatrimestres</p>
+                                            </div>
+                                            <div className="col-span-2">
+                                                <p className="text-muted-foreground">Formato</p>
+                                                <p className="font-medium">{career.format}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <div className="text-center py-8 text-muted-foreground">
+                                Selecciona una carrera para ver tu progreso académico
                             </div>
                         )}
                     </CardContent>
@@ -201,7 +215,7 @@ const Profile = () => {
             <Card className="border-border bg-card" data-testid="gpa-scale-card">
                 <CardHeader>
                     <CardTitle className="font-heading text-lg">Escala de Calificación</CardTitle>
-                    <CardDescription>Sistema de puntos GPA de Unicaribe</CardDescription>
+                    <CardDescription>Sistema de puntos GPA</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

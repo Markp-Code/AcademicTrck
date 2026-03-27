@@ -3,19 +3,20 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/button';
 import { 
-    ShieldCheck, 
+    GraduationCap, 
     House, 
     TreeStructure, 
     ChartBar, 
     User, 
     SignOut,
     List,
-    X
+    X,
+    GearSix
 } from '@phosphor-icons/react';
 
 const Layout = ({ children }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
-    const { user, logout } = useAuth();
+    const { user, logout, isAdmin } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
 
@@ -31,15 +32,19 @@ const Layout = ({ children }) => {
         { path: '/profile', icon: User, label: 'Perfil' },
     ];
 
-    const isActive = (path) => location.pathname === path;
+    if (isAdmin) {
+        navItems.push({ path: '/admin', icon: GearSix, label: 'Admin' });
+    }
+
+    const isActive = (path) => location.pathname === path || location.pathname.startsWith(path + '/');
 
     return (
         <div className="min-h-screen bg-background" data-testid="main-layout">
             {/* Mobile Header */}
             <header className="lg:hidden glass fixed top-0 left-0 right-0 z-50 px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                    <ShieldCheck weight="duotone" className="w-7 h-7 text-blue-400" />
-                    <span className="font-heading font-bold text-lg">Unicaribe</span>
+                    <GraduationCap weight="duotone" className="w-7 h-7 text-blue-400" />
+                    <span className="font-heading font-bold text-lg">UniProgress</span>
                 </div>
                 <Button 
                     variant="ghost" 
@@ -60,9 +65,9 @@ const Layout = ({ children }) => {
             >
                 <div className="p-6">
                     <div className="flex items-center gap-3 mb-8">
-                        <ShieldCheck weight="duotone" className="w-10 h-10 text-blue-400" />
+                        <GraduationCap weight="duotone" className="w-10 h-10 text-blue-400" />
                         <div>
-                            <span className="font-heading font-bold text-lg block">Unicaribe</span>
+                            <span className="font-heading font-bold text-lg block">UniProgress</span>
                             <span className="text-xs text-muted-foreground">Academic Tracker</span>
                         </div>
                     </div>
@@ -97,7 +102,9 @@ const Layout = ({ children }) => {
                         </div>
                         <div className="flex-1 min-w-0">
                             <p className="font-medium text-sm truncate">{user?.name || 'Usuario'}</p>
-                            <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                            <p className="text-xs text-muted-foreground truncate">
+                                {user?.is_admin ? 'Administrador' : user?.email}
+                            </p>
                         </div>
                     </div>
                     <Button 

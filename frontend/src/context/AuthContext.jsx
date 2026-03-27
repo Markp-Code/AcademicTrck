@@ -52,12 +52,14 @@ export const AuthProvider = ({ children }) => {
         return userData;
     };
 
-    const register = async (name, email, password, studentId) => {
+    const register = async (name, email, password, studentId, universityId, careerId) => {
         const response = await axios.post(`${API_URL}/api/auth/register`, {
             name,
             email,
             password,
-            student_id: studentId
+            student_id: studentId || null,
+            university_id: universityId || null,
+            career_id: careerId || null
         });
         const { access_token, user: userData } = response.data;
         localStorage.setItem('token', access_token);
@@ -74,8 +76,22 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
     };
 
+    const updateUser = (userData) => {
+        setUser(prev => ({ ...prev, ...userData }));
+    };
+
     return (
-        <AuthContext.Provider value={{ user, token, loading, login, register, logout, isAuthenticated: !!user }}>
+        <AuthContext.Provider value={{ 
+            user, 
+            token, 
+            loading, 
+            login, 
+            register, 
+            logout, 
+            updateUser,
+            isAuthenticated: !!user,
+            isAdmin: user?.is_admin || false
+        }}>
             {children}
         </AuthContext.Provider>
     );

@@ -1,11 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import axios from 'axios';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
-import { ShieldCheck, Eye, EyeSlash, Spinner } from '@phosphor-icons/react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { GraduationCap, Eye, EyeSlash, Spinner } from '@phosphor-icons/react';
+
+const API_URL = process.env.REACT_APP_BACKEND_URL;
 
 const Register = () => {
     const [name, setName] = useState('');
@@ -13,11 +17,51 @@ const Register = () => {
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [studentId, setStudentId] = useState('');
+    const [universityId, setUniversityId] = useState('');
+    const [careerId, setCareerId] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    
+    const [universities, setUniversities] = useState([]);
+    const [careers, setCareers] = useState([]);
+    const [loadingData, setLoadingData] = useState(true);
+    
     const { register } = useAuth();
     const navigate = useNavigate();
+
+    useEffect(() => {
+        fetchUniversities();
+    }, []);
+
+    useEffect(() => {
+        if (universityId) {
+            fetchCareers(universityId);
+        } else {
+            setCareers([]);
+            setCareerId('');
+        }
+    }, [universityId]);
+
+    const fetchUniversities = async () => {
+        try {
+            const response = await axios.get(`${API_URL}/api/universities`);
+            setUniversities(response.data);
+        } catch (error) {
+            console.error('Failed to fetch universities:', error);
+        } finally {
+            setLoadingData(false);
+        }
+    };
+
+    const fetchCareers = async (uniId) => {
+        try {
+            const response = await axios.get(`${API_URL}/api/careers?university_id=${uniId}`);
+            setCareers(response.data);
+        } catch (error) {
+            console.error('Failed to fetch careers:', error);
+        }
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -36,7 +80,7 @@ const Register = () => {
         setLoading(true);
 
         try {
-            await register(name, email, password, studentId);
+            await register(name, email, password, studentId, universityId, careerId);
             navigate('/dashboard');
         } catch (err) {
             setError(err.response?.data?.detail || 'Error al registrar usuario');
@@ -58,27 +102,27 @@ const Register = () => {
                 <div className="absolute inset-0 bg-gradient-to-br from-[#05070A]/95 via-[#05070A]/80 to-blue-900/30" />
                 <div className="relative z-10 flex flex-col justify-center p-12">
                     <div className="flex items-center gap-3 mb-8">
-                        <ShieldCheck weight="duotone" className="w-12 h-12 text-blue-400" />
-                        <span className="font-heading text-3xl font-bold text-white">Unicaribe</span>
+                        <GraduationCap weight="duotone" className="w-12 h-12 text-blue-400" />
+                        <span className="font-heading text-3xl font-bold text-white">UniProgress</span>
                     </div>
                     <h1 className="font-heading text-4xl sm:text-5xl font-bold text-white leading-tight mb-4">
-                        Únete al<br />
-                        <span className="text-gradient">Seguimiento Académico</span>
+                        Únete a<br />
+                        <span className="text-gradient">UniProgress</span>
                     </h1>
                     <p className="text-gray-400 text-lg max-w-md">
                         Crea tu cuenta y comienza a gestionar tu progreso académico 
-                        en la carrera de Ingeniería en Ciberseguridad.
+                        universitario de forma inteligente.
                     </p>
                 </div>
             </div>
 
             {/* Right side - Form */}
-            <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-background">
+            <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-background overflow-y-auto">
                 <Card className="w-full max-w-md border-border bg-card">
                     <CardHeader className="space-y-1">
                         <div className="flex items-center gap-2 lg:hidden mb-4">
-                            <ShieldCheck weight="duotone" className="w-8 h-8 text-blue-400" />
-                            <span className="font-heading text-xl font-bold">Unicaribe</span>
+                            <GraduationCap weight="duotone" className="w-8 h-8 text-blue-400" />
+                            <span className="font-heading text-xl font-bold">UniProgress</span>
                         </div>
                         <CardTitle className="font-heading text-2xl">Crear Cuenta</CardTitle>
                         <CardDescription>
@@ -111,6 +155,20 @@ const Register = () => {
                             </div>
                             
                             <div className="space-y-2">
+                                <Label htmlFor="email">Correo Electrónico</Label>
+                                <Input
+                                    id="email"
+                                    type="email"
+                                    placeholder="correo@universidad.edu"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    required
+                                    data-testid="register-email-input"
+                                    className="bg-secondary border-border"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
                                 <Label htmlFor="studentId">Matrícula (opcional)</Label>
                                 <Input
                                     id="studentId"
@@ -122,20 +180,40 @@ const Register = () => {
                                     className="bg-secondary border-border"
                                 />
                             </div>
-                            
+
                             <div className="space-y-2">
-                                <Label htmlFor="email">Correo Electrónico</Label>
-                                <Input
-                                    id="email"
-                                    type="email"
-                                    placeholder="estudiante@unicaribe.edu.do"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    required
-                                    data-testid="register-email-input"
-                                    className="bg-secondary border-border"
-                                />
+                                <Label>Universidad</Label>
+                                <Select value={universityId} onValueChange={setUniversityId}>
+                                    <SelectTrigger className="bg-secondary border-border" data-testid="university-select">
+                                        <SelectValue placeholder="Selecciona tu universidad" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {universities.map(uni => (
+                                            <SelectItem key={uni.id} value={uni.id}>
+                                                {uni.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
                             </div>
+
+                            {universityId && (
+                                <div className="space-y-2">
+                                    <Label>Carrera</Label>
+                                    <Select value={careerId} onValueChange={setCareerId}>
+                                        <SelectTrigger className="bg-secondary border-border" data-testid="career-select">
+                                            <SelectValue placeholder="Selecciona tu carrera" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {careers.map(career => (
+                                                <SelectItem key={career.id} value={career.id}>
+                                                    {career.name}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            )}
                             
                             <div className="space-y-2">
                                 <Label htmlFor="password">Contraseña</Label>

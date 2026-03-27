@@ -7,11 +7,14 @@ import Dashboard from './pages/Dashboard';
 import Pensum from './pages/Pensum';
 import Subjects from './pages/Subjects';
 import Profile from './pages/Profile';
+import Admin from './pages/Admin';
+import AdminCareers from './pages/AdminCareers';
+import AdminSubjects from './pages/AdminSubjects';
 import './App.css';
 
 // Protected Route wrapper
-const ProtectedRoute = ({ children }) => {
-    const { isAuthenticated, loading } = useAuth();
+const ProtectedRoute = ({ children, adminOnly = false }) => {
+    const { isAuthenticated, isAdmin, loading } = useAuth();
 
     if (loading) {
         return (
@@ -25,12 +28,16 @@ const ProtectedRoute = ({ children }) => {
         return <Navigate to="/login" replace />;
     }
 
+    if (adminOnly && !isAdmin) {
+        return <Navigate to="/dashboard" replace />;
+    }
+
     return <Layout>{children}</Layout>;
 };
 
-// Public Route wrapper (redirects to dashboard if logged in)
+// Public Route wrapper
 const PublicRoute = ({ children }) => {
-    const { isAuthenticated, loading } = useAuth();
+    const { isAuthenticated, isAdmin, loading } = useAuth();
 
     if (loading) {
         return (
@@ -41,7 +48,7 @@ const PublicRoute = ({ children }) => {
     }
 
     if (isAuthenticated) {
-        return <Navigate to="/dashboard" replace />;
+        return <Navigate to={isAdmin ? "/admin" : "/dashboard"} replace />;
     }
 
     return children;
@@ -102,10 +109,36 @@ function AppRoutes() {
                 }
             />
 
-            {/* Redirect root to dashboard or login */}
+            {/* Admin routes */}
+            <Route
+                path="/admin"
+                element={
+                    <ProtectedRoute adminOnly>
+                        <Admin />
+                    </ProtectedRoute>
+                }
+            />
+            <Route
+                path="/admin/universities/:universityId"
+                element={
+                    <ProtectedRoute adminOnly>
+                        <AdminCareers />
+                    </ProtectedRoute>
+                }
+            />
+            <Route
+                path="/admin/careers/:careerId/subjects"
+                element={
+                    <ProtectedRoute adminOnly>
+                        <AdminSubjects />
+                    </ProtectedRoute>
+                }
+            />
+
+            {/* Redirect root */}
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             
-            {/* Catch all - redirect to dashboard */}
+            {/* Catch all */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
     );

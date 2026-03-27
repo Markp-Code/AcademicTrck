@@ -44,7 +44,7 @@ const Dashboard = () => {
     if (!stats) {
         return (
             <div className="text-center text-muted-foreground py-12">
-                Error al cargar estadísticas
+                Error al cargar estadísticas. Asegúrate de seleccionar una carrera en tu perfil.
             </div>
         );
     }
@@ -72,7 +72,7 @@ const Dashboard = () => {
                     Dashboard
                 </h1>
                 <p className="text-muted-foreground">
-                    Tu progreso en Ingeniería en Ciberseguridad
+                    Tu progreso académico universitario
                 </p>
             </div>
 
@@ -149,7 +149,7 @@ const Dashboard = () => {
                     </CardContent>
                 </Card>
 
-                {/* Time Estimate Card */}
+                {/* Time Estimate Card - Now in YEARS */}
                 <Card className="border-border bg-card card-hover" data-testid="time-card">
                     <CardContent className="p-6">
                         <div className="flex items-start justify-between">
@@ -158,8 +158,8 @@ const Dashboard = () => {
                                     Tiempo Estimado
                                 </p>
                                 <p className="font-mono text-4xl font-light text-foreground">
-                                    {stats.estimated_months_remaining}
-                                    <span className="text-lg text-muted-foreground"> meses</span>
+                                    {stats.estimated_years_remaining}
+                                    <span className="text-lg text-muted-foreground"> años</span>
                                 </p>
                                 <p className="text-sm text-muted-foreground mt-1">
                                     Para graduarte
