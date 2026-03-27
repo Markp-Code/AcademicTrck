@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -16,6 +17,7 @@ import {
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
 const Subjects = () => {
+    const { user } = useAuth();
     const [subjects, setSubjects] = useState([]);
     const [progress, setProgress] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -32,12 +34,17 @@ const Subjects = () => {
 
     useEffect(() => {
         fetchData();
-    }, []);
+    }, [user?.career_id]);
 
     const fetchData = async () => {
         try {
+            const careerId = user?.career_id;
+            const subjectsUrl = careerId 
+                ? `${API_URL}/api/subjects?career_id=${careerId}`
+                : `${API_URL}/api/subjects`;
+                
             const [subjectsRes, progressRes] = await Promise.all([
-                axios.get(`${API_URL}/api/subjects`),
+                axios.get(subjectsUrl),
                 axios.get(`${API_URL}/api/progress`)
             ]);
             setSubjects(subjectsRes.data);
