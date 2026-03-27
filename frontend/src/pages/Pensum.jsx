@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { Card, CardContent } from '../components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -9,7 +9,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { GridFour, TreeStructure, Warning, CheckCircle } from '@phosphor-icons/react';
+import { 
+    GridFour, TreeStructure, Warning, CheckCircle, CalendarBlank, 
+    DotsSixVertical, Trash, Plus, ArrowRight
+} from '@phosphor-icons/react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -25,6 +28,10 @@ const Pensum = () => {
     const [prerequisiteWarning, setPrerequisiteWarning] = useState(null);
     const [updating, setUpdating] = useState(false);
     const [hoveredSubject, setHoveredSubject] = useState(null);
+    
+    // Planner state
+    const [plannerSlots, setPlannerSlots] = useState({});
+    const [draggedSubject, setDraggedSubject] = useState(null);
 
     useEffect(() => {
         fetchData();
@@ -32,7 +39,6 @@ const Pensum = () => {
 
     const fetchData = async () => {
         try {
-            // Filter subjects by user's career
             const careerId = user?.career_id;
             const subjectsUrl = careerId 
                 ? `${API_URL}/api/subjects?career_id=${careerId}`
@@ -44,6 +50,21 @@ const Pensum = () => {
             ]);
             setSubjects(subjectsRes.data);
             setProgress(progressRes.data);
+            
+            // Initialize planner with planned subjects
+            const planned = {};
+            progressRes.data.forEach(p => {
+                if (p.status === 'planned') {
+                    const subject = subjectsRes.data.find(s => s.id === p.subject_id);
+                    if (subject) {
+                        // Group by planned quarter (using subject's original quarter as default)
+                        const slot = subject.quarter;
+                        if (!planned[slot]) planned[slot] = [];
+                        planned[slot].push(subject);
+                    }
+                }
+            });
+            setPlannerSlots(planned);
         } catch (error) {
             console.error('Failed to fetch data:', error);
         } finally {
@@ -61,7 +82,6 @@ const Pensum = () => {
         return prog?.grade;
     }, [progress]);
 
-    // Check if a subject is available (all prerequisites completed)
     const isSubjectAvailable = useCallback((subject) => {
         if (!subject.prerequisites || subject.prerequisites.length === 0) {
             return true;
@@ -73,7 +93,6 @@ const Pensum = () => {
         });
     }, [subjects, getSubjectStatus]);
 
-    // Get subjects that would be unlocked if this subject is completed
     const getUnlockedSubjects = useCallback((subjectCode) => {
         return subjects.filter(s => 
             s.prerequisites && 
@@ -82,7 +101,6 @@ const Pensum = () => {
         );
     }, [subjects, getSubjectStatus]);
 
-    // Get all subjects that would eventually be unlocked (chain)
     const getUnlockChain = useCallback((subjectCode, visited = new Set()) => {
         if (visited.has(subjectCode)) return [];
         visited.add(subjectCode);
@@ -140,6 +158,63 @@ const Pensum = () => {
         }
     };
 
+    // Planner drag & drop handlers
+    const handleDragStart = (e, subject) => {
+        setDraggedSubject(subject);
+        e.dataTransfer.effectAllowed = 'move';
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    };
+
+    const handleDrop = async (e, slotNumber) => {
+        e.preventDefault();
+        if (!draggedSubject) return;
+
+        // Update status to planned
+        try {
+            await axios.put(`${API_URL}/api/progress/${draggedSubject.id}`, {
+                subject_id: draggedSubject.id,
+                status: 'planned',
+                override_prerequisite: true
+            });
+            
+            // Update local state
+            setPlannerSlots(prev => {
+                const updated = { ...prev };
+                // Remove from old slot
+                Object.keys(updated).forEach(key => {
+                    updated[key] = updated[key]?.filter(s => s.id !== draggedSubject.id) || [];
+                });
+                // Add to new slot
+                if (!updated[slotNumber]) updated[slotNumber] = [];
+                updated[slotNumber].push(draggedSubject);
+                return updated;
+            });
+            
+            await fetchData();
+        } catch (error) {
+            console.error('Failed to update planner:', error);
+        }
+        
+        setDraggedSubject(null);
+    };
+
+    const removeFromPlanner = async (subject) => {
+        try {
+            await axios.put(`${API_URL}/api/progress/${subject.id}`, {
+                subject_id: subject.id,
+                status: 'pending',
+                override_prerequisite: true
+            });
+            await fetchData();
+        } catch (error) {
+            console.error('Failed to remove from planner:', error);
+        }
+    };
+
     // Group subjects by quarter
     const quarterGroups = useMemo(() => {
         const groups = {};
@@ -150,7 +225,14 @@ const Pensum = () => {
         return groups;
     }, [subjects]);
 
-    // Get status display info
+    // Get available subjects for planner
+    const availableForPlanner = useMemo(() => {
+        return subjects.filter(s => {
+            const status = getSubjectStatus(s.id);
+            return (status === 'pending' || status === 'planned') && isSubjectAvailable(s);
+        });
+    }, [subjects, getSubjectStatus, isSubjectAvailable]);
+
     const getStatusInfo = (subject) => {
         const status = getSubjectStatus(subject.id);
         const available = isSubjectAvailable(subject);
@@ -200,11 +282,15 @@ const Pensum = () => {
         };
     };
 
-    // Check if subject should be highlighted (would be unlocked)
     const shouldHighlight = (subject) => {
         if (!hoveredSubject) return false;
         const unlockChain = getUnlockChain(hoveredSubject.code);
         return unlockChain.some(s => s.id === subject.id);
+    };
+
+    // Get prerequisite subjects for drawing connections
+    const getPrerequisiteSubject = (prereqCode) => {
+        return subjects.find(s => s.code === prereqCode);
     };
 
     if (loading) {
@@ -216,18 +302,8 @@ const Pensum = () => {
     }
 
     const quarterNames = {
-        1: '1ER CUAT.',
-        2: '2DO CUAT.',
-        3: '3ER CUAT.',
-        4: '4TO CUAT.',
-        5: '5TO CUAT.',
-        6: '6TO CUAT.',
-        7: '7MO CUAT.',
-        8: '8VO CUAT.',
-        9: '9NO CUAT.',
-        10: '10MO CUAT.',
-        11: '11VO CUAT.',
-        12: '12VO CUAT.'
+        1: '1°', 2: '2°', 3: '3°', 4: '4°', 5: '5°', 6: '6°',
+        7: '7°', 8: '8°', 9: '9°', 10: '10°', 11: '11°', 12: '12°'
     };
 
     return (
@@ -276,134 +352,245 @@ const Pensum = () => {
                         <TreeStructure size={18} className="mr-2" />
                         Árbol de Prerrequisitos
                     </TabsTrigger>
+                    <TabsTrigger value="planner" className="data-[state=active]:bg-card" data-testid="planner-tab">
+                        <CalendarBlank size={18} className="mr-2" />
+                        Planificador
+                    </TabsTrigger>
                     <TabsTrigger value="grid" className="data-[state=active]:bg-card" data-testid="grid-view-tab">
                         <GridFour size={18} className="mr-2" />
                         Vista Compacta
                     </TabsTrigger>
                 </TabsList>
 
-                {/* Tree View - Like the reference image */}
+                {/* Tree View */}
                 <TabsContent value="tree" className="mt-0">
-                    <div className="space-y-8 overflow-x-auto pb-4" data-testid="prerequisites-tree">
+                    <div className="space-y-1 overflow-x-auto pb-4" data-testid="prerequisites-tree">
                         {Object.entries(quarterGroups)
                             .sort(([a], [b]) => parseInt(a) - parseInt(b))
-                            .map(([quarter, quarterSubjects]) => (
-                                <div key={quarter} className="relative">
+                            .map(([quarter, quarterSubjects], quarterIndex) => (
+                                <div key={quarter} className="relative flex items-start gap-4">
                                     {/* Quarter Label */}
-                                    <div className="absolute -left-2 top-1/2 -translate-y-1/2 -translate-x-full hidden lg:block">
-                                        <span className="font-mono text-xs text-muted-foreground whitespace-nowrap">
-                                            {quarterNames[quarter] || `${quarter}° CUAT.`}
-                                        </span>
-                                    </div>
-                                    
-                                    {/* Mobile Quarter Label */}
-                                    <div className="lg:hidden mb-3">
-                                        <span className="font-mono text-xs text-muted-foreground bg-secondary px-2 py-1 rounded">
-                                            {quarterNames[quarter] || `${quarter}° CUAT.`}
+                                    <div className="w-12 shrink-0 pt-8 text-center">
+                                        <span className="font-mono text-xs text-muted-foreground font-bold">
+                                            {quarterNames[quarter]}
                                         </span>
                                     </div>
 
                                     {/* Subjects Row */}
-                                    <div className="flex flex-wrap gap-4 lg:gap-3 lg:ml-20">
-                                        {quarterSubjects.map(subject => {
+                                    <div className="flex-1 flex flex-wrap gap-3 py-2 relative">
+                                        {quarterSubjects.map((subject, subjectIndex) => {
                                             const statusInfo = getStatusInfo(subject);
                                             const isHighlighted = shouldHighlight(subject);
                                             const isHovered = hoveredSubject?.id === subject.id;
                                             const grade = getSubjectGrade(subject.id);
 
                                             return (
-                                                <div
-                                                    key={subject.id}
-                                                    className={`
-                                                        relative w-full sm:w-[200px] min-h-[100px] p-3 rounded-md cursor-pointer
-                                                        transition-all duration-300 border-2
-                                                        ${statusInfo.bgClass}
-                                                        ${isHighlighted 
-                                                            ? 'border-green-400 border-dashed shadow-lg shadow-green-500/20 scale-105' 
-                                                            : statusInfo.borderClass
-                                                        }
-                                                        ${isHovered ? 'ring-2 ring-white/30' : ''}
-                                                        hover:scale-[1.02]
-                                                    `}
-                                                    onClick={() => handleSubjectClick(subject)}
-                                                    onMouseEnter={() => setHoveredSubject(subject)}
-                                                    onMouseLeave={() => setHoveredSubject(null)}
-                                                    data-testid={`subject-card-${subject.code}`}
-                                                >
-                                                    {/* Code with dot */}
-                                                    <div className="flex items-center gap-2 mb-2">
-                                                        <div className={`w-2 h-2 rounded-full ${statusInfo.dotClass}`} />
-                                                        <span className={`font-mono text-xs font-bold ${statusInfo.textClass}`}>
-                                                            {subject.code}
-                                                        </span>
-                                                    </div>
-
-                                                    {/* Subject Name */}
-                                                    <h3 className="text-sm font-semibold text-foreground uppercase leading-tight mb-2 line-clamp-3">
-                                                        {subject.name}
-                                                    </h3>
-
-                                                    {/* Status Label */}
-                                                    <div className="absolute bottom-2 left-3 right-3">
-                                                        <span className={`text-[10px] font-mono ${statusInfo.textClass}`}>
-                                                            {statusInfo.label}
-                                                        </span>
-                                                        {grade && (
-                                                            <span className="float-right font-mono text-xs text-emerald-400">
-                                                                {grade}
+                                                <div key={subject.id} className="relative">
+                                                    {/* Connection lines to prerequisites */}
+                                                    {subject.prerequisites?.map(prereqCode => {
+                                                        const prereq = getPrerequisiteSubject(prereqCode);
+                                                        if (!prereq || prereq.quarter >= parseInt(quarter)) return null;
+                                                        
+                                                        const isLineHighlighted = hoveredSubject?.code === prereqCode;
+                                                        
+                                                        return (
+                                                            <div
+                                                                key={prereqCode}
+                                                                className={`absolute -top-1 left-1/2 w-0.5 h-3 
+                                                                    ${isLineHighlighted ? 'bg-green-400' : 'bg-gray-600'}
+                                                                    transition-colors duration-200`}
+                                                                style={{ transform: 'translateX(-50%)' }}
+                                                            />
+                                                        );
+                                                    })}
+                                                    
+                                                    <div
+                                                        className={`
+                                                            relative w-[180px] min-h-[90px] p-3 rounded-md cursor-pointer
+                                                            transition-all duration-200 border-2
+                                                            ${statusInfo.bgClass}
+                                                            ${isHighlighted 
+                                                                ? 'border-green-400 border-dashed shadow-lg shadow-green-500/20 scale-105 z-10' 
+                                                                : statusInfo.borderClass
+                                                            }
+                                                            ${isHovered ? 'ring-2 ring-white/30 z-20' : ''}
+                                                            hover:scale-[1.02]
+                                                        `}
+                                                        onClick={() => handleSubjectClick(subject)}
+                                                        onMouseEnter={() => setHoveredSubject(subject)}
+                                                        onMouseLeave={() => setHoveredSubject(null)}
+                                                        data-testid={`subject-card-${subject.code}`}
+                                                    >
+                                                        {/* Code with dot */}
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <div className={`w-2 h-2 rounded-full ${statusInfo.dotClass}`} />
+                                                            <span className={`font-mono text-xs font-bold ${statusInfo.textClass}`}>
+                                                                {subject.code}
                                                             </span>
+                                                        </div>
+
+                                                        {/* Subject Name */}
+                                                        <h3 className="text-xs font-semibold text-foreground uppercase leading-tight mb-1 line-clamp-2">
+                                                            {subject.name}
+                                                        </h3>
+
+                                                        {/* Credits */}
+                                                        <div className="text-[10px] text-muted-foreground mb-1">
+                                                            {subject.credits} créditos
+                                                        </div>
+
+                                                        {/* Status and Grade */}
+                                                        <div className="flex items-center justify-between">
+                                                            <span className={`text-[10px] font-mono ${statusInfo.textClass}`}>
+                                                                {statusInfo.label}
+                                                            </span>
+                                                            {grade && (
+                                                                <span className="font-mono text-xs text-emerald-400 font-bold">
+                                                                    {grade}
+                                                                </span>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Unlock indicator */}
+                                                        {isHighlighted && (
+                                                            <div className="absolute -top-2 -right-2 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+                                                                <CheckCircle size={12} className="text-white" weight="bold" />
+                                                            </div>
                                                         )}
                                                     </div>
-
-                                                    {/* Unlock indicator */}
-                                                    {isHighlighted && (
-                                                        <div className="absolute -top-2 -right-2 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
-                                                            <CheckCircle size={12} className="text-white" weight="bold" />
-                                                        </div>
+                                                    
+                                                    {/* Arrow to next subjects */}
+                                                    {getUnlockedSubjects(subject.code).length > 0 && (
+                                                        <div className={`absolute -bottom-1 left-1/2 w-0.5 h-3 
+                                                            ${isHovered ? 'bg-green-400' : 'bg-gray-600'}
+                                                            transition-colors duration-200`}
+                                                            style={{ transform: 'translateX(-50%)' }}
+                                                        />
                                                     )}
                                                 </div>
                                             );
                                         })}
                                     </div>
-
-                                    {/* Connection lines (visual only) */}
-                                    {parseInt(quarter) < Math.max(...Object.keys(quarterGroups).map(Number)) && (
-                                        <div className="hidden lg:block absolute left-20 right-0 bottom-0 h-8 pointer-events-none">
-                                            <svg className="w-full h-full overflow-visible" preserveAspectRatio="none">
-                                                {quarterSubjects.map((subject, idx) => {
-                                                    const nextQuarterSubjects = quarterGroups[parseInt(quarter) + 1] || [];
-                                                    const dependents = nextQuarterSubjects.filter(s => 
-                                                        s.prerequisites?.includes(subject.code)
-                                                    );
-                                                    
-                                                    return dependents.map((dep, depIdx) => {
-                                                        const startX = idx * 215 + 100;
-                                                        const endX = nextQuarterSubjects.indexOf(dep) * 215 + 100;
-                                                        const statusInfo = getStatusInfo(subject);
-                                                        const isHighlightedLine = hoveredSubject?.code === subject.code;
-                                                        
-                                                        return (
-                                                            <path
-                                                                key={`${subject.id}-${dep.id}`}
-                                                                d={`M ${startX} 0 Q ${startX} 30, ${(startX + endX) / 2} 30 T ${endX} 60`}
-                                                                fill="none"
-                                                                stroke={isHighlightedLine ? '#22c55e' : '#4B5563'}
-                                                                strokeWidth={isHighlightedLine ? 2 : 1}
-                                                                strokeDasharray={isHighlightedLine ? '5,5' : '3,3'}
-                                                                className="transition-all duration-300"
-                                                            />
-                                                        );
-                                                    });
-                                                })}
-                                            </svg>
-                                        </div>
-                                    )}
                                 </div>
                             ))}
                     </div>
                 </TabsContent>
 
-                {/* Grid View - Compact cards by quarter */}
+                {/* Planner View */}
+                <TabsContent value="planner" className="mt-0">
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6" data-testid="planner-view">
+                        {/* Available Subjects */}
+                        <div className="lg:col-span-1">
+                            <Card className="border-border bg-card sticky top-4">
+                                <CardHeader className="pb-3">
+                                    <CardTitle className="font-heading text-base flex items-center gap-2">
+                                        <Plus size={18} className="text-blue-400" />
+                                        Materias Disponibles
+                                    </CardTitle>
+                                    <p className="text-xs text-muted-foreground">
+                                        Arrastra a un periodo para planificar
+                                    </p>
+                                </CardHeader>
+                                <CardContent className="space-y-2 max-h-[500px] overflow-y-auto">
+                                    {availableForPlanner.filter(s => getSubjectStatus(s.id) !== 'planned').map(subject => (
+                                        <div
+                                            key={subject.id}
+                                            draggable
+                                            onDragStart={(e) => handleDragStart(e, subject)}
+                                            className="p-3 rounded-md bg-blue-900/30 border border-blue-500/50 cursor-grab active:cursor-grabbing hover:bg-blue-900/50 transition-colors"
+                                        >
+                                            <div className="flex items-center gap-2 mb-1">
+                                            <DotsSixVertical size={14} className="text-blue-400" />
+                                                <span className="font-mono text-xs text-blue-400 font-bold">
+                                                    {subject.code}
+                                                </span>
+                                            </div>
+                                            <p className="text-xs font-medium line-clamp-2">{subject.name}</p>
+                                            <p className="text-[10px] text-muted-foreground mt-1">
+                                                {subject.credits} cr • Cuat. {subject.quarter}
+                                            </p>
+                                        </div>
+                                    ))}
+                                    {availableForPlanner.filter(s => getSubjectStatus(s.id) !== 'planned').length === 0 && (
+                                        <p className="text-sm text-muted-foreground text-center py-4">
+                                            No hay materias disponibles para planificar
+                                        </p>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        </div>
+
+                        {/* Planner Timeline */}
+                        <div className="lg:col-span-3">
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                                {[1, 2, 3, 4, 5, 6].map(slotNum => {
+                                    const slotSubjects = Object.entries(plannerSlots)
+                                        .filter(([key]) => Math.ceil(parseInt(key) / 2) === slotNum)
+                                        .flatMap(([, subjects]) => subjects);
+                                    
+                                    const totalCredits = slotSubjects.reduce((acc, s) => acc + s.credits, 0);
+
+                                    return (
+                                        <Card 
+                                            key={slotNum}
+                                            className={`border-border bg-card min-h-[200px] transition-colors ${
+                                                draggedSubject ? 'border-dashed border-blue-500/50' : ''
+                                            }`}
+                                            onDragOver={handleDragOver}
+                                            onDrop={(e) => handleDrop(e, slotNum * 2 - 1)}
+                                        >
+                                            <CardHeader className="pb-2">
+                                                <CardTitle className="font-heading text-sm flex items-center justify-between">
+                                                    <span className="flex items-center gap-2">
+                                                        <CalendarBlank size={16} className="text-purple-400" />
+                                                        Periodo {slotNum}
+                                                    </span>
+                                                    <Badge variant="outline" className="font-mono text-xs">
+                                                        {totalCredits} cr
+                                                    </Badge>
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="space-y-2">
+                                                {slotSubjects.map(subject => (
+                                                    <div
+                                                        key={subject.id}
+                                                        className="p-2 rounded bg-purple-900/30 border border-purple-500/50 group"
+                                                    >
+                                                        <div className="flex items-start justify-between">
+                                                            <div className="flex-1 min-w-0">
+                                                                <span className="font-mono text-xs text-purple-400">
+                                                                    {subject.code}
+                                                                </span>
+                                                                <p className="text-xs font-medium line-clamp-1">{subject.name}</p>
+                                                            </div>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                className="h-6 w-6 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300"
+                                                                onClick={() => removeFromPlanner(subject)}
+                                                            >
+                                                                <Trash size={14} />
+                                                            </Button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                {slotSubjects.length === 0 && (
+                                                    <div className="h-24 flex items-center justify-center border-2 border-dashed border-gray-700 rounded-md">
+                                                        <p className="text-xs text-muted-foreground">
+                                                            Arrastra materias aquí
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </CardContent>
+                                        </Card>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </TabsContent>
+
+                {/* Grid View */}
                 <TabsContent value="grid" className="mt-0">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                         {Object.entries(quarterGroups)
@@ -454,20 +641,44 @@ const Pensum = () => {
                 <div className="fixed bottom-4 right-4 max-w-sm p-4 bg-card border border-border rounded-lg shadow-xl z-50 animate-fade-in">
                     <h4 className="font-mono text-sm text-blue-400 mb-1">{hoveredSubject.code}</h4>
                     <p className="font-medium text-sm mb-2">{hoveredSubject.name}</p>
+                    
+                    {hoveredSubject.prerequisites?.length > 0 && (
+                        <div className="mb-2">
+                            <p className="text-xs text-muted-foreground mb-1">Prerrequisitos:</p>
+                            <div className="flex flex-wrap gap-1">
+                                {hoveredSubject.prerequisites.map(code => {
+                                    const prereq = getPrerequisiteSubject(code);
+                                    const isCompleted = prereq && getSubjectStatus(prereq.id) === 'completed';
+                                    return (
+                                        <Badge 
+                                            key={code} 
+                                            variant="outline" 
+                                            className={`text-xs font-mono ${isCompleted ? 'border-emerald-500 text-emerald-400' : 'border-gray-500'}`}
+                                        >
+                                            {isCompleted && <CheckCircle size={10} className="mr-1" />}
+                                            {code}
+                                        </Badge>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                    
                     {getUnlockChain(hoveredSubject.code).length > 0 && (
-                        <div className="mt-2 pt-2 border-t border-border">
-                            <p className="text-xs text-green-400 mb-1">
-                                Al completar esta materia se desbloquean:
+                        <div className="pt-2 border-t border-border">
+                            <p className="text-xs text-green-400 mb-1 flex items-center gap-1">
+                                <ArrowRight size={12} />
+                                Al completar se desbloquean:
                             </p>
                             <div className="flex flex-wrap gap-1">
-                                {getUnlockChain(hoveredSubject.code).slice(0, 5).map(s => (
+                                {getUnlockChain(hoveredSubject.code).slice(0, 6).map(s => (
                                     <Badge key={s.id} variant="outline" className="text-xs font-mono border-green-500/50 text-green-400">
                                         {s.code}
                                     </Badge>
                                 ))}
-                                {getUnlockChain(hoveredSubject.code).length > 5 && (
+                                {getUnlockChain(hoveredSubject.code).length > 6 && (
                                     <Badge variant="outline" className="text-xs">
-                                        +{getUnlockChain(hoveredSubject.code).length - 5} más
+                                        +{getUnlockChain(hoveredSubject.code).length - 6} más
                                     </Badge>
                                 )}
                             </div>
@@ -520,9 +731,6 @@ const Pensum = () => {
                                     <p className="text-xs text-muted-foreground mt-1">
                                         {prerequisiteWarning.message}
                                     </p>
-                                    <p className="text-xs text-muted-foreground mt-2">
-                                        ¿Deseas continuar de todos modos?
-                                    </p>
                                 </div>
                             </div>
                         </div>
@@ -564,27 +772,20 @@ const Pensum = () => {
                     <DialogFooter>
                         {prerequisiteWarning ? (
                             <>
-                                <Button 
-                                    variant="outline" 
-                                    onClick={() => setPrerequisiteWarning(null)}
-                                >
+                                <Button variant="outline" onClick={() => setPrerequisiteWarning(null)}>
                                     Cancelar
                                 </Button>
                                 <Button 
                                     className="bg-amber-600 hover:bg-amber-500"
                                     onClick={() => handleUpdateProgress(true)}
                                     disabled={updating}
-                                    data-testid="override-button"
                                 >
                                     Continuar de todos modos
                                 </Button>
                             </>
                         ) : (
                             <>
-                                <Button 
-                                    variant="outline" 
-                                    onClick={() => setDialogOpen(false)}
-                                >
+                                <Button variant="outline" onClick={() => setDialogOpen(false)}>
                                     Cancelar
                                 </Button>
                                 <Button 
@@ -593,14 +794,8 @@ const Pensum = () => {
                                     disabled={updating || (newStatus === 'completed' && (!newGrade || parseFloat(newGrade) < 0 || parseFloat(newGrade) > 100))}
                                     data-testid="save-progress-button"
                                 >
-                                    {updating ? (
-                                        <span className="animate-spin">⏳</span>
-                                    ) : (
-                                        <>
-                                            <CheckCircle size={18} className="mr-2" />
-                                            Guardar
-                                        </>
-                                    )}
+                                    <CheckCircle size={18} className="mr-2" />
+                                    Guardar
                                 </Button>
                             </>
                         )}
