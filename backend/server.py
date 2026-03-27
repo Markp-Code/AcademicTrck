@@ -843,6 +843,338 @@ async def seed_database():
         "admin_credentials": {"email": "admin@uniprogress.com", "password": "admin123"}
     }
 
+# ============== REVIEW MODELS ==============
+
+class SubjectReviewCreate(BaseModel):
+    subject_id: str
+    difficulty: int  # 1-5
+    workload: int  # 1-5
+    usefulness: int  # 1-5
+    comment: Optional[str] = None
+    tips: Optional[str] = None
+
+class SubjectReview(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    user_name: str
+    subject_id: str
+    difficulty: int
+    workload: int
+    usefulness: int
+    comment: Optional[str] = None
+    tips: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+# ============== REVIEW ROUTES ==============
+
+@api_router.get("/reviews/{subject_id}")
+async def get_subject_reviews(subject_id: str):
+    reviews = await db.subject_reviews.find(
+        {"subject_id": subject_id}, 
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    
+    # Calculate averages
+    if reviews:
+        avg_difficulty = sum(r["difficulty"] for r in reviews) / len(reviews)
+        avg_workload = sum(r["workload"] for r in reviews) / len(reviews)
+        avg_usefulness = sum(r["usefulness"] for r in reviews) / len(reviews)
+    else:
+        avg_difficulty = avg_workload = avg_usefulness = 0
+    
+    return {
+        "reviews": reviews,
+        "stats": {
+            "count": len(reviews),
+            "avg_difficulty": round(avg_difficulty, 1),
+            "avg_workload": round(avg_workload, 1),
+            "avg_usefulness": round(avg_usefulness, 1)
+        }
+    }
+
+@api_router.post("/reviews")
+async def create_review(data: SubjectReviewCreate, current_user: dict = Depends(get_current_user)):
+    # Check if user already reviewed
+    existing = await db.subject_reviews.find_one({
+        "user_id": current_user["id"],
+        "subject_id": data.subject_id
+    })
+    
+    if existing:
+        # Update existing review
+        await db.subject_reviews.update_one(
+            {"id": existing["id"]},
+            {"$set": {
+                "difficulty": data.difficulty,
+                "workload": data.workload,
+                "usefulness": data.usefulness,
+                "comment": data.comment,
+                "tips": data.tips,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        return {"success": True, "message": "Review updated"}
+    
+    review = SubjectReview(
+        user_id=current_user["id"],
+        user_name=current_user["name"],
+        subject_id=data.subject_id,
+        difficulty=data.difficulty,
+        workload=data.workload,
+        usefulness=data.usefulness,
+        comment=data.comment,
+        tips=data.tips
+    )
+    
+    review_dict = review.model_dump()
+    review_dict["created_at"] = review_dict["created_at"].isoformat()
+    await db.subject_reviews.insert_one(review_dict)
+    
+    return {"success": True, "message": "Review created"}
+
+@api_router.delete("/reviews/{review_id}")
+async def delete_review(review_id: str, current_user: dict = Depends(get_current_user)):
+    review = await db.subject_reviews.find_one({"id": review_id})
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    
+    if review["user_id"] != current_user["id"] and not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    await db.subject_reviews.delete_one({"id": review_id})
+    return {"success": True}
+
+# ============== ALERTS/NOTIFICATIONS ==============
+
+@api_router.get("/alerts")
+async def get_alerts(current_user: dict = Depends(get_current_user)):
+    alerts = []
+    now = datetime.now(timezone.utc)
+    current_month = now.month
+    
+    # Check if it's near registration periods (April or December)
+    if current_month in [3, 4]:  # March-April
+        alerts.append({
+            "type": "registration",
+            "title": "Período de Inscripción - Abril",
+            "message": "En Abril puedes inscribir 2 materias. ¡Aprovecha para adelantar tu carrera!",
+            "priority": "high",
+            "icon": "calendar"
+        })
+    elif current_month in [11, 12]:  # November-December
+        alerts.append({
+            "type": "registration",
+            "title": "Período de Inscripción - Diciembre",
+            "message": "En Diciembre puedes inscribir 2 materias. ¡Planifica tu próximo período!",
+            "priority": "high",
+            "icon": "calendar"
+        })
+    
+    # Check progress
+    progress_list = await db.student_progress.find(
+        {"user_id": current_user["id"]},
+        {"_id": 0}
+    ).to_list(200)
+    
+    in_progress_count = len([p for p in progress_list if p["status"] == "in_progress"])
+    
+    if in_progress_count == 0:
+        alerts.append({
+            "type": "progress",
+            "title": "Sin Materias Activas",
+            "message": "No tienes materias en curso. ¡Inscríbete en una materia para continuar tu progreso!",
+            "priority": "medium",
+            "icon": "warning"
+        })
+    
+    # GPA alerts
+    career_id = current_user.get("career_id")
+    if career_id:
+        subjects = await db.subjects.find({"career_id": career_id}, {"_id": 0}).to_list(200)
+        subjects_map = {s["id"]: s for s in subjects}
+        
+        completed = [p for p in progress_list if p["status"] == "completed" and p.get("grade")]
+        if completed:
+            total_points = 0
+            total_credits = 0
+            for p in completed:
+                subject = subjects_map.get(p["subject_id"])
+                if subject:
+                    grade = p["grade"]
+                    gpa_points = 4.0 if grade >= 90 else 3.0 if grade >= 80 else 2.0 if grade >= 70 else 1.0 if grade >= 60 else 0.0
+                    total_points += gpa_points * subject["credits"]
+                    total_credits += subject["credits"]
+            
+            if total_credits > 0:
+                gpa = total_points / total_credits
+                if gpa >= 3.9:
+                    alerts.append({
+                        "type": "achievement",
+                        "title": "¡Summa Cum Laude!",
+                        "message": f"Tu GPA de {gpa:.2f} te coloca en el honor más alto. ¡Mantén el excelente trabajo!",
+                        "priority": "low",
+                        "icon": "trophy"
+                    })
+                elif gpa < 2.5:
+                    alerts.append({
+                        "type": "warning",
+                        "title": "GPA en Riesgo",
+                        "message": f"Tu GPA actual ({gpa:.2f}) está por debajo del promedio. Considera buscar tutorías o grupos de estudio.",
+                        "priority": "high",
+                        "icon": "alert"
+                    })
+    
+    return alerts
+
+# ============== ADMIN ANALYTICS ==============
+
+@api_router.get("/admin/analytics")
+async def get_admin_analytics(admin: dict = Depends(get_admin_user)):
+    # Get all users with careers
+    users = await db.users.find({"career_id": {"$ne": None}, "is_admin": {"$ne": True}}, {"_id": 0}).to_list(1000)
+    
+    if not users:
+        return {
+            "total_students": 0,
+            "avg_gpa": 0,
+            "completion_rate": 0,
+            "students_by_career": [],
+            "gpa_distribution": [],
+            "top_performers": []
+        }
+    
+    # Calculate stats per student
+    student_stats = []
+    for user in users:
+        progress_list = await db.student_progress.find(
+            {"user_id": user["id"]},
+            {"_id": 0}
+        ).to_list(200)
+        
+        if user.get("career_id"):
+            subjects = await db.subjects.find({"career_id": user["career_id"]}, {"_id": 0}).to_list(200)
+            subjects_map = {s["id"]: s for s in subjects}
+            
+            completed = [p for p in progress_list if p["status"] == "completed" and p.get("grade")]
+            
+            if completed:
+                total_points = 0
+                total_credits = 0
+                for p in completed:
+                    subject = subjects_map.get(p["subject_id"])
+                    if subject:
+                        grade = p["grade"]
+                        gpa_points = 4.0 if grade >= 90 else 3.0 if grade >= 80 else 2.0 if grade >= 70 else 1.0 if grade >= 60 else 0.0
+                        total_points += gpa_points * subject["credits"]
+                        total_credits += subject["credits"]
+                
+                gpa = total_points / total_credits if total_credits > 0 else 0
+                total_career_credits = sum(s["credits"] for s in subjects)
+                completion = (total_credits / total_career_credits * 100) if total_career_credits > 0 else 0
+                
+                student_stats.append({
+                    "user_id": user["id"],
+                    "name": user["name"],
+                    "career_id": user["career_id"],
+                    "gpa": round(gpa, 2),
+                    "credits_earned": total_credits,
+                    "completion": round(completion, 1)
+                })
+    
+    # Aggregate stats
+    avg_gpa = sum(s["gpa"] for s in student_stats) / len(student_stats) if student_stats else 0
+    avg_completion = sum(s["completion"] for s in student_stats) / len(student_stats) if student_stats else 0
+    
+    # Students by career
+    careers = await db.careers.find({}, {"_id": 0}).to_list(100)
+    career_names = {c["id"]: c["name"] for c in careers}
+    
+    students_by_career = {}
+    for s in student_stats:
+        career_name = career_names.get(s["career_id"], "Unknown")
+        if career_name not in students_by_career:
+            students_by_career[career_name] = {"count": 0, "total_gpa": 0}
+        students_by_career[career_name]["count"] += 1
+        students_by_career[career_name]["total_gpa"] += s["gpa"]
+    
+    students_by_career_list = [
+        {
+            "career": name,
+            "students": data["count"],
+            "avg_gpa": round(data["total_gpa"] / data["count"], 2) if data["count"] > 0 else 0
+        }
+        for name, data in students_by_career.items()
+    ]
+    
+    # GPA distribution
+    gpa_ranges = {"3.5-4.0": 0, "3.0-3.49": 0, "2.5-2.99": 0, "2.0-2.49": 0, "< 2.0": 0}
+    for s in student_stats:
+        if s["gpa"] >= 3.5:
+            gpa_ranges["3.5-4.0"] += 1
+        elif s["gpa"] >= 3.0:
+            gpa_ranges["3.0-3.49"] += 1
+        elif s["gpa"] >= 2.5:
+            gpa_ranges["2.5-2.99"] += 1
+        elif s["gpa"] >= 2.0:
+            gpa_ranges["2.0-2.49"] += 1
+        else:
+            gpa_ranges["< 2.0"] += 1
+    
+    gpa_distribution = [{"range": k, "count": v} for k, v in gpa_ranges.items()]
+    
+    # Top performers
+    top_performers = sorted(student_stats, key=lambda x: x["gpa"], reverse=True)[:10]
+    
+    return {
+        "total_students": len(users),
+        "avg_gpa": round(avg_gpa, 2),
+        "completion_rate": round(avg_completion, 1),
+        "students_by_career": students_by_career_list,
+        "gpa_distribution": gpa_distribution,
+        "top_performers": top_performers
+    }
+
+# ============== CSV IMPORT ==============
+
+@api_router.post("/admin/import-subjects/{career_id}")
+async def import_subjects_csv(career_id: str, subjects_data: List[SubjectCreate], admin: dict = Depends(get_admin_user)):
+    """Import multiple subjects at once"""
+    career = await db.careers.find_one({"id": career_id}, {"_id": 0})
+    if not career:
+        raise HTTPException(status_code=404, detail="Career not found")
+    
+    imported = 0
+    errors = []
+    
+    for data in subjects_data:
+        try:
+            # Check if exists
+            existing = await db.subjects.find_one({"code": data.code, "career_id": career_id})
+            if existing:
+                errors.append(f"{data.code}: Already exists")
+                continue
+            
+            subject = Subject(
+                code=data.code,
+                name=data.name,
+                credits=data.credits,
+                quarter=data.quarter,
+                career_id=career_id,
+                prerequisites=data.prerequisites,
+                category=data.category
+            )
+            await db.subjects.insert_one(subject.model_dump())
+            imported += 1
+        except Exception as e:
+            errors.append(f"{data.code}: {str(e)}")
+    
+    return {
+        "success": True,
+        "imported": imported,
+        "errors": errors
+    }
+
 # Include router
 app.include_router(api_router)
 

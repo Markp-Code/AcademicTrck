@@ -11,8 +11,9 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { 
     GridFour, TreeStructure, Warning, CheckCircle, CalendarBlank, 
-    DotsSixVertical, Trash, Plus, ArrowRight
+    DotsSixVertical, Trash, Plus, ArrowRight, FilePdf
 } from '@phosphor-icons/react';
+import { generateTranscriptPDF } from '../utils/pdfGenerator';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -32,6 +33,9 @@ const Pensum = () => {
     // Planner state
     const [plannerSlots, setPlannerSlots] = useState({});
     const [draggedSubject, setDraggedSubject] = useState(null);
+    const [career, setCareer] = useState(null);
+    const [university, setUniversity] = useState(null);
+    const [exportingPDF, setExportingPDF] = useState(false);
 
     useEffect(() => {
         fetchData();
@@ -51,6 +55,20 @@ const Pensum = () => {
             setSubjects(subjectsRes.data);
             setProgress(progressRes.data);
             
+            // Fetch career and university for PDF export
+            if (careerId) {
+                try {
+                    const careerRes = await axios.get(`${API_URL}/api/careers/${careerId}`);
+                    setCareer(careerRes.data);
+                    if (careerRes.data?.university_id) {
+                        const uniRes = await axios.get(`${API_URL}/api/universities/${careerRes.data.university_id}`);
+                        setUniversity(uniRes.data);
+                    }
+                } catch (e) {
+                    console.error('Failed to fetch career/university:', e);
+                }
+            }
+            
             // Initialize planner with planned subjects
             const planned = {};
             progressRes.data.forEach(p => {
@@ -69,6 +87,17 @@ const Pensum = () => {
             console.error('Failed to fetch data:', error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleExportTranscript = async () => {
+        setExportingPDF(true);
+        try {
+            await generateTranscriptPDF(user, subjects, progress, career, university);
+        } catch (error) {
+            console.error('Failed to export transcript:', error);
+        } finally {
+            setExportingPDF(false);
         }
     };
 
@@ -309,13 +338,29 @@ const Pensum = () => {
     return (
         <div className="space-y-6" data-testid="pensum-page">
             {/* Header */}
-            <div className="mb-8">
-                <h1 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight mb-2">
-                    Pensum Académico
-                </h1>
-                <p className="text-muted-foreground">
-                    {subjects.length} materias • Selecciona una materia para ver qué se desbloquea
-                </p>
+            <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <h1 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight mb-2">
+                        Pensum Académico
+                    </h1>
+                    <p className="text-muted-foreground">
+                        {subjects.length} materias • Selecciona una materia para ver qué se desbloquea
+                    </p>
+                </div>
+                <Button
+                    variant="outline"
+                    onClick={handleExportTranscript}
+                    disabled={exportingPDF || subjects.length === 0}
+                    className="border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
+                    data-testid="export-transcript-btn"
+                >
+                    {exportingPDF ? (
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-400 mr-2" />
+                    ) : (
+                        <FilePdf size={18} className="mr-2" />
+                    )}
+                    Exportar Record
+                </Button>
             </div>
 
             {/* Legend */}

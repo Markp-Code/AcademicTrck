@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { Button } from './ui/button';
 import { 
     GraduationCap, 
@@ -11,12 +12,15 @@ import {
     SignOut,
     List,
     X,
-    GearSix
+    GearSix,
+    Sun,
+    Moon
 } from '@phosphor-icons/react';
 
 const Layout = ({ children }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const { user, logout, isAdmin } = useAuth();
+    const { theme, toggleTheme } = useTheme();
     const location = useLocation();
     const navigate = useNavigate();
 
@@ -46,14 +50,25 @@ const Layout = ({ children }) => {
                     <GraduationCap weight="duotone" className="w-7 h-7 text-blue-400" />
                     <span className="font-heading font-bold text-lg">UniProgress</span>
                 </div>
-                <Button 
-                    variant="ghost" 
-                    size="icon"
-                    onClick={() => setSidebarOpen(!sidebarOpen)}
-                    data-testid="mobile-menu-toggle"
-                >
-                    {sidebarOpen ? <X size={24} /> : <List size={24} />}
-                </Button>
+                <div className="flex items-center gap-2">
+                    <Button 
+                        variant="ghost" 
+                        size="icon"
+                        onClick={toggleTheme}
+                        data-testid="theme-toggle-mobile"
+                        className="text-muted-foreground hover:text-foreground"
+                    >
+                        {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+                    </Button>
+                    <Button 
+                        variant="ghost" 
+                        size="icon"
+                        onClick={() => setSidebarOpen(!sidebarOpen)}
+                        data-testid="mobile-menu-toggle"
+                    >
+                        {sidebarOpen ? <X size={24} /> : <List size={24} />}
+                    </Button>
+                </div>
             </header>
 
             {/* Sidebar */}
@@ -106,6 +121,15 @@ const Layout = ({ children }) => {
                                 {user?.is_admin ? 'Administrador' : user?.email}
                             </p>
                         </div>
+                        <Button 
+                            variant="ghost" 
+                            size="icon"
+                            onClick={toggleTheme}
+                            data-testid="theme-toggle-desktop"
+                            className="text-muted-foreground hover:text-foreground hidden lg:flex"
+                        >
+                            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+                        </Button>
                     </div>
                     <Button 
                         variant="ghost" 

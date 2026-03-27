@@ -1,26 +1,39 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Progress } from '../components/ui/progress';
 import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
 import { 
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
     Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend 
 } from 'recharts';
 import { 
     Trophy, GraduationCap, Target, Clock, ChartLineUp, 
-    BookOpen, CheckCircle, CircleDashed, CalendarBlank
+    BookOpen, CheckCircle, CircleDashed, CalendarBlank,
+    Calculator, FilePdf, Download
 } from '@phosphor-icons/react';
+import GPASimulator from '../components/GPASimulator';
+import { generateProgressPDF } from '../utils/pdfGenerator';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
 const Dashboard = () => {
+    const { user } = useAuth();
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [simulatorOpen, setSimulatorOpen] = useState(false);
+    const [subjects, setSubjects] = useState([]);
+    const [progress, setProgress] = useState([]);
+    const [career, setCareer] = useState(null);
+    const [university, setUniversity] = useState(null);
+    const [exportingPDF, setExportingPDF] = useState(false);
 
     useEffect(() => {
         fetchStats();
-    }, []);
+        fetchExportData();
+    }, [user?.career_id]);
 
     const fetchStats = async () => {
         try {
@@ -30,6 +43,41 @@ const Dashboard = () => {
             console.error('Failed to fetch stats:', error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchExportData = async () => {
+        try {
+            const careerId = user?.career_id;
+            if (!careerId) return;
+
+            const [subjectsRes, progressRes, careerRes] = await Promise.all([
+                axios.get(`${API_URL}/api/subjects?career_id=${careerId}`),
+                axios.get(`${API_URL}/api/progress`),
+                axios.get(`${API_URL}/api/careers/${careerId}`)
+            ]);
+            
+            setSubjects(subjectsRes.data);
+            setProgress(progressRes.data);
+            setCareer(careerRes.data);
+
+            if (careerRes.data?.university_id) {
+                const uniRes = await axios.get(`${API_URL}/api/universities/${careerRes.data.university_id}`);
+                setUniversity(uniRes.data);
+            }
+        } catch (error) {
+            console.error('Failed to fetch export data:', error);
+        }
+    };
+
+    const handleExportPDF = async () => {
+        setExportingPDF(true);
+        try {
+            await generateProgressPDF(user, stats, subjects, progress, career, university);
+        } catch (error) {
+            console.error('Failed to export PDF:', error);
+        } finally {
+            setExportingPDF(false);
         }
     };
 
@@ -67,13 +115,40 @@ const Dashboard = () => {
     return (
         <div className="space-y-6 animate-fade-in" data-testid="dashboard">
             {/* Header */}
-            <div className="mb-8">
-                <h1 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight mb-2">
-                    Dashboard
-                </h1>
-                <p className="text-muted-foreground">
-                    Tu progreso académico universitario
-                </p>
+            <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <h1 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight mb-2">
+                        Dashboard
+                    </h1>
+                    <p className="text-muted-foreground">
+                        Tu progreso académico universitario
+                    </p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <Button
+                        variant="outline"
+                        onClick={() => setSimulatorOpen(true)}
+                        className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+                        data-testid="gpa-simulator-btn"
+                    >
+                        <Calculator size={18} className="mr-2" />
+                        Simulador GPA
+                    </Button>
+                    <Button
+                        variant="outline"
+                        onClick={handleExportPDF}
+                        disabled={exportingPDF || !stats}
+                        className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                        data-testid="export-pdf-btn"
+                    >
+                        {exportingPDF ? (
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-400 mr-2" />
+                        ) : (
+                            <FilePdf size={18} className="mr-2" />
+                        )}
+                        Exportar PDF
+                    </Button>
+                </div>
             </div>
 
             {/* Stats Cards */}
@@ -421,6 +496,15 @@ const Dashboard = () => {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* GPA Simulator Modal */}
+            <GPASimulator
+                isOpen={simulatorOpen}
+                onClose={() => setSimulatorOpen(false)}
+                currentGPA={stats?.gpa || 0}
+                creditsEarned={stats?.credits_earned || 0}
+                totalCredits={stats?.total_credits || 0}
+            />
         </div>
     );
 };
