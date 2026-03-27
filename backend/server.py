@@ -619,9 +619,12 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
     
     progress_percentage = (total_credits_earned / total_credits * 100) if total_credits > 0 else 0
     
-    # Calculate estimated years (1 subject per month = 12 subjects per year)
+    # Calculate estimated years
+    # Normal: 1 subject per month, but April and December allow 2 subjects
+    # So per year: 10 months × 1 + 2 months × 2 = 14 subjects per year
     remaining_subjects = len(in_progress) + len(planned) + len(pending)
-    estimated_years = remaining_subjects / 12.0  # 12 subjects per year
+    subjects_per_year = 14  # 10 regular months + 2 double months (April, December)
+    estimated_years = remaining_subjects / subjects_per_year if subjects_per_year > 0 else 0
     
     # GPA by quarter
     gpa_by_quarter = []
